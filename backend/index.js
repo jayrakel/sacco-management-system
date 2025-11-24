@@ -29,8 +29,11 @@ app.use('/auth', loginLimiter, authRoutes);
 app.use('/api/loan', loanRoutes);
 app.use('/api/payment', paymentRoutes);
 
-// Health Check
-app.get('/', (req, res) => res.send("Secure Sacco Backend Online"));
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: "Internal System Error" });
+});
 
 // --- INITIALIZATION LOGIC ---
 const initializeSystem = async () => {
@@ -41,7 +44,6 @@ const initializeSystem = async () => {
         if (userCount === 0) {
             console.log("⚠️ No users found. Initializing System...");
             
-            // Create Default Admin
             const salt = await bcrypt.genSalt(10);
             const hash = await bcrypt.hash("admin123", salt);
 

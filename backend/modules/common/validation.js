@@ -10,6 +10,7 @@ const validate = (schema) => {
     };
 };
 
+// Schemas
 const registerSchema = Joi.object({
     fullName: Joi.string().min(3).max(50).required(),
     email: Joi.string().email().required(),
@@ -35,20 +36,10 @@ const paymentSchema = Joi.object({
     mpesaRef: Joi.string().pattern(/^[A-Z0-9]{10}$/).required()
 });
 
-const tableLoanSchema = Joi.object({
-    loanId: Joi.number().integer().required()
-});
-
-const disburseSchema = Joi.object({
-    loanId: Joi.number().integer().required()
-});
-
 module.exports = { 
     validate, 
     registerSchema, 
     loginSchema, 
     loanSubmitSchema, 
-    paymentSchema,
-    tableLoanSchema,
-    disburseSchema
+    paymentSchema 
 };
