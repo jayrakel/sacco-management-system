@@ -97,4 +97,79 @@ router.post('/table', requireRole('SECRETARY'), async (req, res) => {
     }
 });
 
+// --- TREASURER ROUTES ---
+
+// 1. Get Disbursement Queue (Loans that have been Tabled/Approved)
+router.get('/treasury/queue', requireRole('TREASURER'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT l.id, l.amount_requested, l.repayment_weeks, l.purpose, u.full_name, u.phone_number
+             FROM loan_applications l
+             JOIN users u ON l.user_id = u.id
+             WHERE l.status = 'TABLED'
+             ORDER BY l.created_at ASC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch disbursement queue" });
+    }
+});
+
+// 2. Disburse Funds (Activate Loan)
+router.post('/treasury/disburse', requireRole('TREASURER'), async (req, res) => {
+    const { loanId } = req.body;
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // Check current status
+        const check = await client.query("SELECT status, amount_requested FROM loan_applications WHERE id=$1", [loanId]);
+        if (check.rows.length === 0) throw new Error("Loan not found");
+        if (check.rows[0].status !== 'TABLED') throw new Error("Loan is not ready for disbursement");
+
+        // Update Status to ACTIVE (Money sent)
+        await client.query(
+            `UPDATE loan_applications 
+             SET status='ACTIVE', updated_at=NOW() 
+             WHERE id=$1`,
+            [loanId]
+        );
+
+        // Record the Disbursement Transaction (Money OUT)
+        await client.query(
+            `INSERT INTO transactions (user_id, type, amount, reference_code) 
+             VALUES ($1, 'LOAN_DISBURSEMENT', $2, $3)`,
+            [req.user.id, check.rows[0].amount_requested, `DISB-${loanId}-${Date.now()}`]
+        );
+
+        await client.query('COMMIT');
+        res.json({ success: true, message: "Funds Disbursed Successfully" });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// 3. Get Financial Stats (Simple Overview)
+router.get('/treasury/stats', requireRole('TREASURER'), async (req, res) => {
+    try {
+        // Calculate Total Application Fees Collected (Income)
+        const incomeRes = await db.query("SELECT COUNT(*) * 500 as total_fees FROM loan_applications WHERE status != 'FEE_PENDING'");
+        
+        // Calculate Total Active Loans (Money Out)
+        const loanRes = await db.query("SELECT SUM(amount_requested) as total_loans FROM loan_applications WHERE status = 'ACTIVE'");
+
+        res.json({
+            totalFees: parseInt(incomeRes.rows[0].total_fees) || 0,
+            totalDisbursed: parseInt(loanRes.rows[0].total_loans) || 0
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Stats failed" });
+    }
+});
+
 module.exports = router;
