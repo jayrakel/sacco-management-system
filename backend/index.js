@@ -14,7 +14,7 @@ app.use(express.json());
 
 // 2. Rate Limiting (Stop Brute Force)
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 30 * 60 * 1000, // 15 minutes
     max: 5, 
     message: { error: "Too many login attempts, please try again later." }
 });
