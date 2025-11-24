@@ -3,7 +3,18 @@ import axios from 'axios';
 import { Lock, CreditCard, CheckCircle, Send, Clock, Calendar, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const api = axios.create({ baseURL: 'http://localhost:5000' });
+const api = axios.create({ 
+    baseURL: 'http://localhost:5000'
+});
+
+// Automatically add token to every request
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
 
 export default function MemberDashboard({ user, onLogout }) {
   const [appState, setAppState] = useState({ status: 'LOADING' });

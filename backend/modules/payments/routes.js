@@ -1,14 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
+const { authenticateUser } = require('../auth/middleware');
 
-router.post('/pay-fee', async (req, res) => {
+router.post('/pay-fee', authenticateUser, async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
 
     try {
         await client.query('BEGIN');
         
+        // Security: Check ownership
+        const loanCheck = await client.query("SELECT user_id FROM loan_applications WHERE id=$1", [loanAppId]);
+        if (loanCheck.rows.length === 0 || loanCheck.rows[0].user_id !== req.user.id) {
+            throw new Error("Unauthorized loan access");
+        }
+
         // 1. Record Transaction
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
@@ -16,7 +23,7 @@ router.post('/pay-fee', async (req, res) => {
             [req.user.id, mpesaRef]
         );
 
-        // 2. Notify Loan Table (Direct DB update since we are in the same server)
+        // 2. Update Loan
         await client.query(
             `UPDATE loan_applications 
              SET status='FEE_PAID', fee_transaction_ref=$1 
@@ -29,7 +36,7 @@ router.post('/pay-fee', async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: "Payment Failed" });
+        res.status(500).json({ error: "Payment Failed or Unauthorized" });
     } finally {
         client.release();
     }
