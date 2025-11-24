@@ -159,7 +159,7 @@ export default function MemberDashboard({ user, onLogout }) {
                     <label className="block text-sm font-bold text-slate-700 mb-2">Repayment Duration</label>
                     <div className="flex items-center gap-4 bg-slate-50 p-2 rounded-xl border border-slate-200">
                         <div className="bg-white p-3 rounded-lg shadow-sm"><Calendar size={20} className="text-slate-400"/></div>
-                        <input type="number" required min="1" max="52" className="bg-transparent w-full outline-none font-bold text-slate-700" placeholder="Weeks"
+                        <input type="number" required min="1" max="500" className="bg-transparent w-full outline-none font-bold text-slate-700" placeholder="Weeks"
                             value={formData.repaymentWeeks} onChange={e => setFormData({...formData, repaymentWeeks: e.target.value})} />
                         <span className="text-slate-400 font-medium pr-4">Weeks</span>
                     </div>
