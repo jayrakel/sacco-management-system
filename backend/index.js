@@ -1,28 +1,35 @@
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt'); // Import bcrypt
-const db = require('./db'); // Import DB connection
-require('dotenv').config();
 const rateLimit = require('express-rate-limit');
-const loginLimiter = rateLimit({ windowMs: 30 * 60 * 1000, max: 5 }); // 5 attempts per 30 mins
+const bcrypt = require('bcrypt');
+const db = require('./db');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({
-    origin: 'http://localhost:5173' // Or your production URL
-}));
+// 1. Security Middleware
+app.use(cors({ origin: 'http://localhost:5173' })); // Lock to frontend
 app.use(express.json());
 
-// Routes
+// 2. Rate Limiting (Stop Brute Force)
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, 
+    message: { error: "Too many login attempts, please try again later." }
+});
+
+// --- MODULES ---
 const authRoutes = require('./modules/auth/routes');
 const loanRoutes = require('./modules/loans/routes');
 const paymentRoutes = require('./modules/payments/routes');
 
-app.use('/auth', authRoutes, loginLimiter);
+// Apply Routes (Limiter only on Auth)
+app.use('/auth', loginLimiter, authRoutes);
 app.use('/api/loan', loanRoutes);
 app.use('/api/payment', paymentRoutes);
 
+// Health Check
 app.get('/', (req, res) => res.send("Secure Sacco Backend Online"));
 
 // --- INITIALIZATION LOGIC ---
@@ -36,7 +43,7 @@ const initializeSystem = async () => {
             
             // Create Default Admin
             const salt = await bcrypt.genSalt(10);
-            const hash = await bcrypt.hash("admin123", salt); // DEFAULT PASSWORD: admin123
+            const hash = await bcrypt.hash("admin123", salt);
 
             await db.query(
                 `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
@@ -44,17 +51,14 @@ const initializeSystem = async () => {
                 ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0000000000']
             );
 
-            console.log("✅ DEFAULT ADMIN CREATED:");
-            console.log("   📧 Email: admin@sacco.com");
-            console.log("   🔑 Pass:  admin123");
-            console.log("   (Please change this password immediately in production)");
+            console.log("✅ DEFAULT ADMIN CREATED: admin@sacco.com / admin123");
         }
     } catch (err) {
-        console.error("❌ System Initialization Failed:", err.message);
+        console.error("❌ System Init Failed:", err.message);
     }
 };
 
 app.listen(PORT, async () => {
-    await initializeSystem(); // Run the check before starting
+    await initializeSystem();
     console.log(`🚀 Server running securely on port ${PORT}`);
 });

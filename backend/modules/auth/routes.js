@@ -4,15 +4,14 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('./middleware');
-// IMPORT VALIDATION
 const { validate, registerSchema, loginSchema } = require('../common/validation');
 
-// REGISTER: Now protected by 'validate(registerSchema)'
+// REGISTER (Protected: Admin Only)
 router.post('/register', authenticateUser, requireRole('ADMIN'), validate(registerSchema), async (req, res) => {
     const { fullName, email, password, role, phoneNumber } = req.body;
 
     try {
-        const userCheck = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        const userCheck = await db.query("SELECT id FROM users WHERE email = $1", [email]);
         if (userCheck.rows.length > 0) return res.status(400).json({ error: "Email already exists" });
 
         const salt = await bcrypt.genSalt(10);
@@ -31,9 +30,8 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
     }
 });
 
-// LOGIN: Now protected by 'validate(loginSchema)'
+// LOGIN (Public)
 router.post('/login', validate(loginSchema), async (req, res) => {
-    // ... existing login logic (no changes needed inside the function) ...
     const { email, password } = req.body;
 
     try {
@@ -53,7 +51,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
         res.json({ 
             success: true,
             token,
-            user: { id: user.id, name: user.full_name, role: user.role }
+            user: { id: user.id, name: user.full_name, role: user.role, email: user.email }
         });
 
     } catch (err) {
