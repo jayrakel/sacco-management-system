@@ -3,11 +3,15 @@ const cors = require('cors');
 const bcrypt = require('bcrypt'); // Import bcrypt
 const db = require('./db'); // Import DB connection
 require('dotenv').config();
+const rateLimit = require('express-rate-limit');
+const loginLimiter = rateLimit({ windowMs: 30 * 60 * 1000, max: 5 }); // 5 attempts per 30 mins
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:5173' // Or your production URL
+}));
 app.use(express.json());
 
 // Routes
@@ -15,7 +19,7 @@ const authRoutes = require('./modules/auth/routes');
 const loanRoutes = require('./modules/loans/routes');
 const paymentRoutes = require('./modules/payments/routes');
 
-app.use('/auth', authRoutes);
+app.use('/auth', authRoutes, loginLimiter);
 app.use('/api/loan', loanRoutes);
 app.use('/api/payment', paymentRoutes);
 

@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
+const { validate, loanSubmitSchema } = require('../common/validation');
+
+// --- MEMBER ROUTES --- //
 
 // Protected: All routes require login
 router.use(authenticateUser);
@@ -94,6 +97,31 @@ router.post('/table', requireRole('SECRETARY'), async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: "Failed to table loan" });
+    }
+});
+
+// SUBMIT FORM: Protected by 'validate(loanSubmitSchema)'
+router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
+    const { loanAppId, amount, purpose, repaymentWeeks } = req.body;
+    
+    try {
+        const check = await db.query("SELECT user_id, status FROM loan_applications WHERE id=$1", [loanAppId]);
+        
+        if (check.rows.length === 0) return res.status(404).json({ error: "Not found" });
+        // Security: IDOR Protection
+        if (check.rows[0].user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
+        if (check.rows[0].status !== 'FEE_PAID') return res.status(400).json({ error: "Fee not paid" });
+
+        await db.query(
+            `UPDATE loan_applications 
+             SET amount_requested=$1, purpose=$2, repayment_weeks=$3, status='SUBMITTED' 
+             WHERE id=$4`,
+            [amount, purpose, repaymentWeeks, loanAppId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Submission Error" });
     }
 });
 
