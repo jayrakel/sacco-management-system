@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api'; // Use central secure API
-import { Wallet, TrendingUp, ArrowUpRight, ArrowDownLeft, LogOut, Banknote, CheckCircle } from 'lucide-react';
+import { Wallet, TrendingUp, ArrowUpRight, ArrowDownLeft, LogOut, Banknote, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function TreasurerDashboard({ user, onLogout }) {
   const [queue, setQueue] = useState([]);
-  const [stats, setStats] = useState({ totalFees: 0, totalDisbursed: 0 });
+  const [stats, setStats] = useState({ availableFunds: 0, totalDisbursed: 0 });
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,13 +31,17 @@ export default function TreasurerDashboard({ user, onLogout }) {
     if (!confirm(`Confirm transfer of KES ${amount}? This cannot be undone.`)) return;
     
     setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    
     try {
       await api.post('/api/loan/treasury/disburse', { loanId });
       setSuccessMsg(`Successfully disbursed funds for Loan #${loanId}`);
       setTimeout(() => setSuccessMsg(''), 4000);
       await fetchData();
     } catch (err) {
-      alert("Error: " + (err.response?.data?.error || "Transaction Failed"));
+      setErrorMsg(err.response?.data?.error || "Transaction Failed");
+      setTimeout(() => setErrorMsg(''), 4000);
     }
     setLoading(false);
   };
@@ -58,17 +63,17 @@ export default function TreasurerDashboard({ user, onLogout }) {
         
         {/* Financial Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-            {/* Income Card */}
+            {/* Available Cash Card */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-emerald-100 relative overflow-hidden">
                 <div className="flex justify-between items-start">
                     <div>
-                        <p className="text-slate-500 text-sm font-medium uppercase tracking-wider">Fee Income</p>
-                        <h3 className="text-3xl font-bold text-slate-900 mt-2">KES {stats.totalFees.toLocaleString()}</h3>
+                        <p className="text-slate-500 text-sm font-medium uppercase tracking-wider">Net Liquid Capital</p>
+                        <h3 className="text-3xl font-bold text-emerald-700 mt-2">KES {stats.availableFunds.toLocaleString()}</h3>
                     </div>
                     <div className="bg-emerald-100 p-3 rounded-lg text-emerald-600"><ArrowDownLeft size={24}/></div>
                 </div>
                 <p className="text-emerald-600 text-xs font-bold mt-4 flex items-center gap-1">
-                    <TrendingUp size={14}/> Liquid Capital (In)
+                    <TrendingUp size={14}/> Cash Available for Disbursement
                 </p>
             </div>
 
@@ -76,33 +81,40 @@ export default function TreasurerDashboard({ user, onLogout }) {
             <div className="bg-white p-6 rounded-xl shadow-sm border border-amber-100 relative overflow-hidden">
                 <div className="flex justify-between items-start">
                     <div>
-                        <p className="text-slate-500 text-sm font-medium uppercase tracking-wider">Total Disbursed</p>
+                        <p className="text-slate-500 text-sm font-medium uppercase tracking-wider">Total Assets (Loans)</p>
                         <h3 className="text-3xl font-bold text-slate-900 mt-2">KES {stats.totalDisbursed.toLocaleString()}</h3>
                     </div>
                     <div className="bg-amber-100 p-3 rounded-lg text-amber-600"><ArrowUpRight size={24}/></div>
                 </div>
                 <p className="text-amber-600 text-xs font-bold mt-4 flex items-center gap-1">
-                    <Wallet size={14}/> Assets (Loans Out)
+                    <Wallet size={14}/> Money owed by members
                 </p>
             </div>
         </div>
 
-        {/* Success Notification */}
+        {/* Notifications */}
         {successMsg && (
-            <div className="bg-emerald-600 text-white p-4 rounded-xl shadow-lg mb-8 flex items-center gap-3 animate-bounce-short">
+            <div className="bg-emerald-600 text-white p-4 rounded-xl shadow-lg mb-8 flex items-center gap-3">
                 <CheckCircle className="text-emerald-200" /> 
                 <span className="font-medium">{successMsg}</span>
+            </div>
+        )}
+        {errorMsg && (
+            <div className="bg-red-600 text-white p-4 rounded-xl shadow-lg mb-8 flex items-center gap-3">
+                <AlertTriangle className="text-red-200" /> 
+                <span className="font-medium">{errorMsg}</span>
             </div>
         )}
 
         {/* Disbursement Queue */}
         <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-3">
-            <Banknote className="text-slate-400"/> Pending Disbursements
+            <Banknote className="text-slate-400"/> Approved Loans (Ready for Disbursement)
         </h2>
 
         {queue.length === 0 ? (
             <div className="bg-white p-12 rounded-xl text-center border-2 border-dashed border-slate-300">
-                <p className="text-slate-400 text-lg">No active loans require funding.</p>
+                <p className="text-slate-400 text-lg">No approved loans pending disbursement.</p>
+                <p className="text-sm text-slate-400 mt-2">Loans must be Voted on and Approved by Secretary first.</p>
             </div>
         ) : (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -112,19 +124,26 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             <tr>
                                 <th className="p-4">Member</th>
                                 <th className="p-4">Contact</th>
-                                <th className="p-4">Purpose</th>
                                 <th className="p-4 text-right">Amount</th>
+                                <th className="p-4 text-center">Votes (Yes)</th>
                                 <th className="p-4 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {queue.map(loan => (
                                 <tr key={loan.id} className="hover:bg-slate-50 transition">
-                                    <td className="p-4 font-medium text-slate-900">{loan.full_name}</td>
+                                    <td className="p-4 font-medium text-slate-900">
+                                        {loan.full_name}
+                                        <div className="text-xs text-slate-500 italic">"{loan.purpose}"</div>
+                                    </td>
                                     <td className="p-4 text-slate-500">{loan.phone_number}</td>
-                                    <td className="p-4 text-slate-600 italic">"{loan.purpose}"</td>
                                     <td className="p-4 text-right font-mono font-bold text-slate-800">
                                         {parseInt(loan.amount_requested).toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <span className="bg-blue-100 text-blue-700 py-1 px-2 rounded text-xs font-bold">
+                                            {loan.yes_votes}
+                                        </span>
                                     </td>
                                     <td className="p-4 text-center">
                                         <button 
