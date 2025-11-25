@@ -28,7 +28,7 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
         console.error(err);
         res.status(500).json({ error: "Registration failed" });
     }
-});
+})
 
 // LOGIN (Public)
 router.post('/login', validate(loginSchema), async (req, res) => {
@@ -48,9 +48,17 @@ router.post('/login', validate(loginSchema), async (req, res) => {
             { expiresIn: '1h' }
         );
 
+        // SECURITY FIX: Send token as HTTP-Only Cookie
+        res.cookie('token', token, {
+            httpOnly: true, // JavaScript cannot access this (Blocks XSS)
+            secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
+            sameSite: 'strict', // Protects against CSRF
+            maxAge: 3600000 // 1 hour
+        });
+
         res.json({ 
             success: true,
-            token,
+            // Token is no longer in the body!
             user: { id: user.id, name: user.full_name, role: user.role, email: user.email }
         });
 
@@ -58,6 +66,12 @@ router.post('/login', validate(loginSchema), async (req, res) => {
         console.error(err);
         res.status(500).json({ error: "Login failed" });
     }
+});
+
+// Logout Route (Optional but good practice)
+router.post('/logout', (req, res) => {
+    res.clearCookie('token');
+    res.json({ message: "Logged out successfully" });
 });
 
 module.exports = router;

@@ -2,19 +2,19 @@ const jwt = require('jsonwebtoken');
 
 // 1. Verify Token (Authentication)
 const authenticateUser = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // "Bearer <token>"
+    // Check for token in Cookies (Preferred) OR Authorization Header (Fallback)
+    const token = req.cookies.token || (req.headers['authorization'] && req.headers['authorization'].split(' ')[1]);
 
     if (!token) return res.status(401).json({ error: "Access Denied: No Token Provided" });
 
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ error: "Access Denied: Invalid Token" });
-        req.user = user; // Attach decoded user to request
+        req.user = user; 
         next();
     });
 };
 
-// 2. Check Role (Authorization)
+// ... requireRole remains unchanged ...
 const requireRole = (role) => {
     return (req, res, next) => {
         if (req.user.role !== role) {
