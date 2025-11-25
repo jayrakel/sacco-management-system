@@ -1,29 +1,62 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Users, LogOut, BarChart3, Check, X, AlertCircle } from 'lucide-react';
+import { Users, Gavel, LogOut, BarChart3, Check, X, AlertCircle, FileText } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 export default function SecretaryDashboard({ user, onLogout }) {
-  const [tally, setTally] = useState([]);
+  const [agenda, setAgenda] = useState([]); // New Applications (Status: SUBMITTED)
+  const [tally, setTally] = useState([]);   // Active Voting Process (Status: TABLED/VOTING)
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-  // Poll for live votes every 3 seconds
   useEffect(() => {
-    const fetchTally = async () => {
-      try {
-        const res = await api.get('/api/loan/secretary/live-tally');
-        setTally(res.data);
-      } catch (err) { console.error(err); }
-    };
+    if(!user || user.role !== 'SECRETARY') navigate('/');
+    
+    // Initial Load
+    fetchAgenda();
+    fetchTally();
 
-    fetchTally(); // Initial fetch
+    // Poll for live votes every 3 seconds
     const interval = setInterval(fetchTally, 3000); 
     return () => clearInterval(interval);
-  }, []);
+  }, [user]);
 
+  // Fetch Pending Applications
+  const fetchAgenda = async () => {
+    try {
+      const res = await api.get('/api/loan/agenda');
+      setAgenda(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  // Fetch Live Votes
+  const fetchTally = async () => {
+    try {
+      const res = await api.get('/api/loan/secretary/live-tally');
+      setTally(res.data);
+    } catch (err) { console.error(err); }
+  };
+
+  // Action: Table the Motion (Triggers notification to members)
+  const handleTableLoan = async (loanId) => {
+    setLoading(true);
+    try {
+        await api.post('/api/loan/table', { loanId });
+        await fetchAgenda(); // Refresh agenda list
+        await fetchTally();  // It should now appear in the monitor
+        alert("Motion Tabled! Notification sent to all members.");
+    } catch (err) { 
+        alert("Error: " + (err.response?.data?.error || "Failed to table"));
+    }
+    setLoading(false);
+  };
+
+  // Action: Finalize Vote
   const finalize = async (loanId, decision) => {
-      if(!confirm(`Are you sure you want to ${decision} this loan? This action is final and notifications will be sent.`)) return;
+      if(!confirm(`Confirm: ${decision} this loan based on the vote result?`)) return;
       try {
         await api.post('/api/loan/secretary/finalize', { loanId, decision });
-        // Optimistic update or let the poller refresh it
+        fetchTally(); // Should disappear from active monitor
       } catch (err) {
           alert("Action failed: " + (err.response?.data?.error || "Unknown error"));
       }
@@ -42,93 +75,114 @@ export default function SecretaryDashboard({ user, onLogout }) {
          </button>
       </nav>
 
-      <main className="max-w-4xl mx-auto mt-8 p-6">
-        <div className="flex items-center gap-3 mb-8">
-            <div className="bg-white p-3 rounded-xl shadow-sm text-purple-600 border border-purple-100"><BarChart3 size={24}/></div>
-            <div>
-                <h1 className="text-2xl font-bold text-slate-900">Live Voting Monitor</h1>
-                <p className="text-slate-500">Track member votes and finalize loan decisions.</p>
-            </div>
-        </div>
+      <main className="max-w-6xl mx-auto mt-8 p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {tally.length === 0 ? (
-            <div className="bg-white p-12 rounded-2xl text-center border-2 border-dashed border-slate-300">
-                <div className="mx-auto w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-400">
-                    <AlertCircle size={32}/>
+        {/* COLUMN 1: NEW AGENDA ITEMS (Pending Tabling) */}
+        <div>
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <FileText className="text-purple-600"/> New Applications
+            </h2>
+            
+            {agenda.length === 0 ? (
+                <div className="bg-white p-8 rounded-xl text-center border-2 border-dashed border-slate-200">
+                    <p className="text-slate-400">No new loan applications received.</p>
                 </div>
-                <p className="text-slate-500 text-lg font-medium">No active motions</p>
-                <p className="text-sm text-slate-400 mt-1">Table loans to start the voting process.</p>
-            </div>
-        ) : (
-            <div className="grid gap-6">
-                {tally.map(item => {
-                    const yes = parseInt(item.yes_votes);
-                    const no = parseInt(item.no_votes);
-                    const total = yes + no;
-                    const yesPercent = total === 0 ? 0 : (yes / total) * 100;
-                    const isPassing = total > 0 && yesPercent > 50;
-
-                    return (
-                        <div key={item.id} className="bg-white p-6 rounded-xl shadow-md border border-slate-200 relative overflow-hidden">
-                            {/* Status Badge */}
-                            <div className="absolute top-6 right-6">
-                                <span className={`text-xs font-bold px-3 py-1 rounded-full border ${
-                                    item.status === 'VOTING' 
-                                    ? 'bg-amber-50 text-amber-600 border-amber-200 animate-pulse' 
-                                    : 'bg-slate-50 text-slate-500 border-slate-200'
-                                }`}>
-                                    {item.status === 'VOTING' ? '● LIVE VOTING' : item.status}
-                                </span>
+            ) : (
+                <div className="space-y-4">
+                    {agenda.map(loan => (
+                        <div key={loan.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                            <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-lg">{loan.full_name}</h4>
+                                <span className="bg-purple-50 text-purple-700 text-xs font-bold px-2 py-1 rounded">SUBMITTED</span>
                             </div>
-
-                            <div className="mb-6 pr-24">
-                                <h3 className="font-bold text-xl text-slate-800">{item.full_name}</h3>
-                                <p className="text-sm text-slate-500 mt-1">Requesting <span className="font-bold text-slate-900">KES {parseInt(item.amount_requested).toLocaleString()}</span></p>
-                            </div>
-
-                            {/* Voting Visuals */}
-                            <div className="bg-slate-50 rounded-xl p-5 border border-slate-100 mb-6">
-                                <div className="flex justify-between items-end mb-2 text-sm font-bold">
-                                    <span className="text-emerald-600">{yes} YES</span>
-                                    <span className="text-red-500">{no} NO</span>
-                                </div>
-                                <div className="w-full bg-slate-200 h-4 rounded-full overflow-hidden flex">
-                                    <div className="bg-emerald-500 h-full transition-all duration-1000 ease-out" style={{ width: `${yesPercent}%` }}></div>
-                                    <div className="bg-red-500 h-full transition-all duration-1000 ease-out flex-1"></div>
-                                </div>
-                                <div className="mt-2 text-center text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                    Total Votes: {total}
-                                </div>
-                            </div>
-
-                            {/* Actions (Only available during Voting) */}
-                            {item.status === 'VOTING' && (
-                                <div className="flex gap-4">
-                                    <button 
-                                        onClick={() => finalize(item.id, 'APPROVED')} 
-                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 transition"
-                                    >
-                                        <Check size={18}/> Pass Motion
-                                    </button>
-                                    <button 
-                                        onClick={() => finalize(item.id, 'REJECTED')} 
-                                        className="flex-1 bg-white border border-red-200 text-red-600 hover:bg-red-50 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition"
-                                    >
-                                        <X size={18}/> Fail Motion
-                                    </button>
-                                </div>
-                            )}
+                            <p className="text-slate-600 text-sm mb-4">Requests <span className="font-bold">KES {parseInt(loan.amount_requested).toLocaleString()}</span> for "{loan.purpose}"</p>
                             
-                            {item.status === 'TABLED' && (
-                                <div className="text-center bg-slate-50 p-3 rounded-lg text-slate-400 text-sm italic">
-                                    Waiting for Chairperson to open voting...
-                                </div>
-                            )}
+                            <button 
+                                onClick={() => handleTableLoan(loan.id)}
+                                disabled={loading}
+                                className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-bold text-sm transition flex items-center justify-center gap-2"
+                            >
+                                <Gavel size={16}/> Table Motion for AGM
+                            </button>
                         </div>
-                    );
-                })}
-            </div>
-        )}
+                    ))}
+                </div>
+            )}
+        </div>
+
+        {/* COLUMN 2: LIVE VOTING MONITOR (Active Meetings) */}
+        <div>
+            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+                <BarChart3 className="text-emerald-600"/> Active Voting Sessions
+            </h2>
+
+            {tally.length === 0 ? (
+                <div className="bg-white p-8 rounded-xl text-center border-2 border-dashed border-slate-200">
+                    <div className="mx-auto w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-3 text-slate-400">
+                        <AlertCircle size={24}/>
+                    </div>
+                    <p className="text-slate-400">No motions currently on the floor.</p>
+                </div>
+            ) : (
+                <div className="space-y-6">
+                    {tally.map(item => {
+                        const yes = parseInt(item.yes_votes);
+                        const no = parseInt(item.no_votes);
+                        const total = yes + no;
+                        const yesPercent = total === 0 ? 0 : (yes / total) * 100;
+
+                        return (
+                            <div key={item.id} className="bg-white p-6 rounded-xl shadow-md border border-slate-200 relative overflow-hidden">
+                                {/* Live Badge */}
+                                <div className="absolute top-0 right-0 p-4">
+                                    <span className={`text-xs font-bold px-2 py-1 rounded ${
+                                        item.status === 'VOTING' 
+                                        ? 'bg-red-100 text-red-600 animate-pulse' 
+                                        : 'bg-amber-100 text-amber-700'
+                                    }`}>
+                                        {item.status === 'VOTING' ? '● LIVE' : 'WAITING'}
+                                    </span>
+                                </div>
+
+                                <div className="mb-4 pr-12">
+                                    <h3 className="font-bold text-slate-800">Loan #{item.id} - {item.full_name}</h3>
+                                    <p className="text-xs text-slate-500">Amount: KES {parseInt(item.amount_requested).toLocaleString()}</p>
+                                </div>
+
+                                {/* Voting Visuals */}
+                                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 mb-4">
+                                    <div className="flex justify-between items-end mb-2 text-xs font-bold">
+                                        <span className="text-emerald-600">{yes} YES</span>
+                                        <span className="text-red-500">{no} NO</span>
+                                    </div>
+                                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
+                                        <div className="bg-emerald-500 h-full transition-all duration-1000 ease-out" style={{ width: `${yesPercent}%` }}></div>
+                                        <div className="bg-red-500 h-full transition-all duration-1000 ease-out flex-1"></div>
+                                    </div>
+                                </div>
+
+                                {/* Actions (Only available during Voting or if Tabled to force close) */}
+                                {item.status === 'VOTING' ? (
+                                    <div className="flex gap-2">
+                                        <button onClick={() => finalize(item.id, 'APPROVED')} className="flex-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 py-2 rounded font-bold text-xs flex items-center justify-center gap-1">
+                                            <Check size={14}/> Pass
+                                        </button>
+                                        <button onClick={() => finalize(item.id, 'REJECTED')} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded font-bold text-xs flex items-center justify-center gap-1">
+                                            <X size={14}/> Reject
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-center text-slate-400 italic">
+                                        Waiting for Chair (Admin) to open voting...
+                                    </p>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+
       </main>
     </div>
   );

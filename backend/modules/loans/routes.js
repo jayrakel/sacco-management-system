@@ -3,13 +3,12 @@ const router = express.Router();
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 const { validate, loanSubmitSchema, tableLoanSchema, disburseSchema } = require('../common/validation');
-const { notifyUser, notifyAll } = require('../common/notify'); // Ensure you created this helper in Step 2 of previous turn
+const { notifyUser, notifyAll } = require('../common/notify');
 
 router.use(authenticateUser);
 
 // --- 1. COMMON ROUTES ---
 
-// GET MY STATUS
 router.get('/status', async (req, res) => {
     try {
         const result = await db.query(
@@ -26,7 +25,6 @@ router.get('/status', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Server Error" }); }
 });
 
-// INIT APPLICATION
 router.post('/init', async (req, res) => {
     try {
         const activeCheck = await db.query("SELECT id FROM loan_applications WHERE user_id = $1 AND status NOT IN ('REJECTED', 'COMPLETED') LIMIT 1", [req.user.id]);
@@ -36,7 +34,6 @@ router.post('/init', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Init failed" }); }
 });
 
-// SUBMIT APPLICATION
 router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
     const { loanAppId, amount, purpose, repaymentWeeks } = req.body;
     try {
@@ -57,7 +54,6 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
 
 // --- 2. ADMIN ROUTES (The Chairperson) ---
 
-// GET TABLED MOTIONS (For Admin to Open Voting)
 router.get('/admin/agenda', requireRole('ADMIN'), async (req, res) => {
     try {
         const result = await db.query(
@@ -70,12 +66,11 @@ router.get('/admin/agenda', requireRole('ADMIN'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Fetch error" }); }
 });
 
-// OPEN VOTING
 router.post('/admin/open-voting', requireRole('ADMIN'), async (req, res) => {
     const { loanId } = req.body;
     try {
         await db.query("UPDATE loan_applications SET status='VOTING' WHERE id=$1", [loanId]);
-        await notifyAll(`📢 AGM NOTICE: Voting is now OPEN for Loan Application #${loanId}. Please cast your vote immediately.`);
+        await notifyAll(`📢 VOTING OPEN: The Chair has opened the floor. Please cast your vote for Loan #${loanId} now.`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Failed to open voting" }); }
 });
@@ -110,6 +105,7 @@ router.post('/vote', async (req, res) => {
 
 // --- 4. SECRETARY ROUTES ---
 
+// GET PENDING (SUBMITTED) LOANS FOR TABLING
 router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
     try {
         const result = await db.query(
@@ -122,13 +118,21 @@ router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Agenda Error" }); }
 });
 
+// TABLE MOTION (Triggers Meeting Notification)
 router.post('/table', requireRole('SECRETARY'), validate(tableLoanSchema), async (req, res) => {
+    const { loanId } = req.body;
     try {
-        await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [req.body.loanId]);
+        // Update Status
+        await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [loanId]);
+        
+        // NOTIFICATION LOGIC: Notify all members of the meeting
+        await notifyAll(`📅 MEETING NOTICE: Loan Application #${loanId} has been tabled. An AGM will be called shortly for voting.`);
+        
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Failed to table" }); }
 });
 
+// GET LIVE TALLY
 router.get('/secretary/live-tally', requireRole('SECRETARY'), async (req, res) => {
     try {
         const result = await db.query(
@@ -145,6 +149,7 @@ router.get('/secretary/live-tally', requireRole('SECRETARY'), async (req, res) =
     } catch (err) { res.status(500).json({ error: "Tally Error" }); }
 });
 
+// FINALIZE VOTE
 router.post('/secretary/finalize', requireRole('SECRETARY'), async (req, res) => {
     const { loanId, decision } = req.body;
     try {
@@ -154,13 +159,11 @@ router.post('/secretary/finalize', requireRole('SECRETARY'), async (req, res) =>
         const newStatus = decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
         await db.query("UPDATE loan_applications SET status=$1 WHERE id=$2", [newStatus, loanId]);
         
-        // Notifications
         const msg = decision === 'APPROVED' 
-            ? `✅ RESULTS: Loan #${loanId} for KES ${loan.rows[0].amount_requested} was APPROVED.` 
-            : `❌ RESULTS: Loan #${loanId} was REJECTED by members.`;
+            ? `✅ VOTE RESULT: Loan #${loanId} APPROVED by membership.` 
+            : `❌ VOTE RESULT: Loan #${loanId} REJECTED by membership.`;
         
         await notifyAll(msg);
-        
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Finalize Error" }); }
 });
@@ -204,8 +207,6 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
         if (check.rows.length === 0 || check.rows[0].status !== 'APPROVED') throw new Error("Invalid loan");
         
         const amount = parseFloat(check.rows[0].amount_requested);
-        
-        // Liquidity Check
         const stats = await client.query(`
             SELECT 
                 (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE status='COMPLETED') as savings,

@@ -92,9 +92,9 @@ export default function MemberDashboard({ user, onLogout }) {
       e.preventDefault();
       setLoading(true);
       try {
-          // In production, this ref would come from the STK Push callback
-          // For now, user enters it manually or we generate one
-          const finalRef = repayForm.mpesaRef || `PAY-${Math.floor(Math.random() * 100000)}`;
+          // Generate a valid M-Pesa style code for simulation (e.g. QX92J...)
+          const randomPart = Math.random().toString(36).substring(2, 12).toUpperCase();
+          const finalRef = repayForm.mpesaRef || `PAY${randomPart}`;
           
           await api.post('/api/payment/repay-loan', {
               loanAppId: loanState.id,
@@ -123,12 +123,17 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const handleLoanFeePayment = async () => {
     setLoading(true);
-    const mockRef = `MP-${Math.floor(Math.random() * 1000000)}`;
+    // FIX: Generate a valid 10-character alphanumeric string (e.g., QX829LA102)
+    const mockRef = 'MP' + Math.random().toString(36).substring(2, 10).toUpperCase();
+    
     try {
         await api.post('/api/payment/pay-fee', { loanAppId: loanState.id, mpesaRef: mockRef });
         setRefreshKey(old => old + 1);
         showNotify('success', 'Fee paid successfully!');
-    } catch (err) { showNotify('error', "Payment Failed"); }
+    } catch (err) { 
+        console.error(err);
+        showNotify('error', err.response?.data?.error || "Payment Failed"); 
+    }
     setLoading(false);
   };
 
