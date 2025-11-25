@@ -1,14 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api'; // Use central secure API
 import { Users, Gavel, LogOut, FileText, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-const api = axios.create({ baseURL: 'http://localhost:5000' });
-api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-});
 
 export default function SecretaryDashboard({ user, onLogout }) {
   const [agenda, setAgenda] = useState([]);
@@ -29,8 +22,10 @@ export default function SecretaryDashboard({ user, onLogout }) {
 
   const handleTableLoan = async (loanId) => {
     setLoading(true);
-    await api.post('/api/loan/table', { loanId });
-    await fetchAgenda();
+    try {
+        await api.post('/api/loan/table', { loanId });
+        await fetchAgenda();
+    } catch (err) { console.error(err); }
     setLoading(false);
   };
 

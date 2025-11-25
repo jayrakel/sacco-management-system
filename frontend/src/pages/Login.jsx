@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { ShieldCheck, LogIn, Lock, Mail, ChevronRight } from 'lucide-react';
+import api from '../api'; // Import the secure API
+import { ShieldCheck, Lock, Mail, ChevronRight } from 'lucide-react';
 
 export default function Login({ setUser }) {
   const [email, setEmail] = useState('');
@@ -16,16 +16,19 @@ export default function Login({ setUser }) {
     setError('');
     
     try {
-      const res = await axios.post('http://localhost:5000/auth/login', { email, password });
-      const { token, user } = res.data;
+      // Use the secure api instance
+      const res = await api.post('/auth/login', { email, password });
       
-      // Securely store session
-      localStorage.setItem('token', token);
+      // Backend now sets the HttpOnly cookie automatically.
+      // We only receive the user data in the body.
+      const { user } = res.data;
+      
+      // Store user info for UI (name, role), but NOT the sensitive token
       localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
 
       // Intelligent Routing
-      const paths = { 'ADMIN': '/admin', 'SECRETARY': '/secretary', 'MEMBER': '/member' };
+      const paths = { 'ADMIN': '/admin', 'SECRETARY': '/secretary', 'MEMBER': '/member', 'TREASURER': '/treasurer' };
       navigate(paths[user.role] || '/member');
       
     } catch (err) {

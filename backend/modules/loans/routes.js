@@ -7,18 +7,25 @@ const { validate, loanSubmitSchema, tableLoanSchema, disburseSchema } = require(
 // Protect ALL routes in this file
 router.use(authenticateUser);
 
-// GET STATUS
+// GET STATUS (Updated to include amount_repaid)
 router.get('/status', async (req, res) => {
     try {
         const result = await db.query(
-            `SELECT id, status, fee_amount, amount_requested, purpose, repayment_weeks, fee_transaction_ref
+            `SELECT id, status, fee_amount, amount_requested, amount_repaid, purpose, repayment_weeks, fee_transaction_ref
              FROM loan_applications 
              WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
             [req.user.id]
         );
         if (result.rows.length === 0) return res.json({ status: 'NO_APP' });
-        res.json(result.rows[0]);
+        
+        // Ensure numbers are formatted
+        const loan = result.rows[0];
+        loan.amount_requested = parseFloat(loan.amount_requested || 0);
+        loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
+        
+        res.json(loan);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: "Server Error" });
     }
 });
@@ -50,7 +57,6 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
         const check = await db.query("SELECT user_id, status FROM loan_applications WHERE id=$1", [loanAppId]);
         
         if (check.rows.length === 0) return res.status(404).json({ error: "Not found" });
-        // SECURITY: IDOR Check
         if (check.rows[0].user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
         if (check.rows[0].status !== 'FEE_PAID') return res.status(400).json({ error: "Fee not paid" });
 
@@ -135,7 +141,10 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
         if (check.rows.length === 0) throw new Error("Loan not found");
         if (check.rows[0].status !== 'TABLED') throw new Error("Loan not approved for disbursement");
 
+        // Set to ACTIVE so member can start repaying
         await client.query("UPDATE loan_applications SET status='ACTIVE', updated_at=NOW() WHERE id=$1", [loanId]);
+        
+        // Record transaction
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
              VALUES ($1, 'LOAN_DISBURSEMENT', $2, $3)`,

@@ -10,7 +10,7 @@ const validate = (schema) => {
     };
 };
 
-// Schemas
+// --- SCHEMAS ---
 const registerSchema = Joi.object({
     fullName: Joi.string().min(3).max(50).required(),
     email: Joi.string().email().required(),
@@ -31,9 +31,25 @@ const loanSubmitSchema = Joi.object({
     repaymentWeeks: Joi.number().integer().min(1).max(52).required()
 });
 
+// Fee Payment (Fixed Amount)
 const paymentSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
-    mpesaRef: Joi.string().pattern(/^[A-Z0-9]{10}$/).required()
+    mpesaRef: Joi.string().pattern(/^[A-Z0-9]{10,15}$/).required()
+});
+
+// New: Loan Repayment (Variable Amount)
+const repaymentSchema = Joi.object({
+    loanAppId: Joi.number().integer().required(),
+    amount: Joi.number().integer().min(50).required(), // Min Repayment 50
+    mpesaRef: Joi.string().required()
+});
+
+const tableLoanSchema = Joi.object({
+    loanId: Joi.number().integer().required()
+});
+
+const disburseSchema = Joi.object({
+    loanId: Joi.number().integer().required()
 });
 
 module.exports = { 
@@ -41,5 +57,8 @@ module.exports = {
     registerSchema, 
     loginSchema, 
     loanSubmitSchema, 
-    paymentSchema 
+    paymentSchema,
+    repaymentSchema, // <--- Exported here
+    tableLoanSchema,
+    disburseSchema
 };

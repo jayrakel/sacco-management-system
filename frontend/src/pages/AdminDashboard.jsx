@@ -1,13 +1,6 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api'; // Use central secure API
 import { UserPlus, Shield, LogOut, Smartphone, Mail, Lock, Check } from 'lucide-react';
-
-const api = axios.create({ baseURL: 'http://localhost:5000' });
-api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-});
 
 export default function AdminDashboard({ user, onLogout }) {
   const [formData, setFormData] = useState({

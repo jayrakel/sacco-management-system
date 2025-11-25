@@ -1,15 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api'; // Use central secure API
 import { Wallet, TrendingUp, ArrowUpRight, ArrowDownLeft, LogOut, Banknote, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-// Secure API Setup
-const api = axios.create({ baseURL: 'http://localhost:5000' });
-api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-});
 
 export default function TreasurerDashboard({ user, onLogout }) {
   const [queue, setQueue] = useState([]);

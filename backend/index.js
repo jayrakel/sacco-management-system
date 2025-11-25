@@ -29,8 +29,8 @@ const loginLimiter = rateLimit({
 
 // General limit for API calls (DoS Protection)
 const apiLimiter = rateLimit({
-    windowMs: 30 * 60 * 1000,
-    max: 100, // 100 requests per 30 mins per IP
+    windowMs: 30 * 60 * 1000, // 30 minutes
+    max: 100, // 100 requests per 30 minutes per IP
     standardHeaders: true,
     legacyHeaders: false,
 });
@@ -39,11 +39,17 @@ const apiLimiter = rateLimit({
 const authRoutes = require('./modules/auth/routes');
 const loanRoutes = require('./modules/loans/routes');
 const paymentRoutes = require('./modules/payments/routes');
+const depositRoutes = require('./modules/deposits/routes');
+
+// --- ROUTES ---
 
 // Apply Routes
 app.use('/auth', loginLimiter, authRoutes);
 app.use('/api/loan', apiLimiter, loanRoutes); // Apply general limiter
 app.use('/api/payment', apiLimiter, paymentRoutes); // Apply general limiter
+app.use('/api/deposits', apiLimiter, depositRoutes); // Apply general limiter
+
+// --- ERROR HANDLING ---
 
 // Global Error Handler
 app.use((err, req, res, next) => {
