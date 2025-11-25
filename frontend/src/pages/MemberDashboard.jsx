@@ -13,6 +13,7 @@ export default function MemberDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); 
 
+
   // Financial Data
   const [savings, setSavings] = useState({ balance: 0, history: [] });
   
@@ -26,6 +27,7 @@ export default function MemberDashboard({ user, onLogout }) {
   
   const [notification, setNotification] = useState(null);
   const navigate = useNavigate();
+  const [serverNotifications, setServerNotifications] = useState([]);
 
   // --- INITIAL DATA FETCHING ---
   useEffect(() => {
@@ -36,7 +38,8 @@ export default function MemberDashboard({ user, onLogout }) {
             const [balanceRes, historyRes, loanRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
-                api.get('/api/loan/status')
+                api.get('/api/loan/status'),
+                api.get('/api/loan/notifications')
             ]);
 
             setSavings({
@@ -51,6 +54,8 @@ export default function MemberDashboard({ user, onLogout }) {
                 loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
             }
             setLoanState(loan);
+
+            setServerNotifications(notifyRes.data);
 
         } catch (err) {
             console.error("Error loading dashboard data", err);
@@ -211,7 +216,7 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                 </div>
             </div>
-
+        
             {/* Mini History Card */}
             <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col">
                 <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider">
