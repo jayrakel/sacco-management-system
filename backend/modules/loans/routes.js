@@ -118,18 +118,89 @@ router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Agenda Error" }); }
 });
 
-// TABLE MOTION (Triggers Meeting Notification)
+// ACTION 1: TABLE MOTION (Immediate Notification)
 router.post('/table', requireRole('SECRETARY'), validate(tableLoanSchema), async (req, res) => {
     const { loanId } = req.body;
     try {
-        // Update Status
+        // 1. Get Loan & Applicant Details
+        const loanQuery = await db.query(
+            `SELECT l.id, l.amount_requested, u.full_name as applicant_name 
+             FROM loan_applications l
+             JOIN users u ON l.user_id = u.id 
+             WHERE l.id = $1`, 
+            [loanId]
+        );
+
+        if (loanQuery.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
+        const loan = loanQuery.rows[0];
+
+        // 2. Update Status
         await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [loanId]);
         
-        // NOTIFICATION LOGIC: Notify all members of the meeting
-        await notifyAll(`📅 MEETING NOTICE: Loan Application #${loanId} has been tabled. An AGM will be called shortly for voting.`);
+        // 3. SEND IMMEDIATE NOTIFICATION (Text-based with newlines)
+        await notifyAll((recipient) => {
+            return `📢 MEETING NOTICE
+
+Dear ${recipient.full_name},
+
+A loan application number ${loan.id} has been submitted by ${loan.applicant_name} for review by the committee. It is now pending review and shall be discussed in our next scheduled meeting.
+
+Thank you,
+Secretary`;
+        });
         
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Failed to table" }); }
+        res.json({ success: true, message: "Loan tabled and members notified." });
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Failed to table loan" }); 
+    }
+});
+
+// ACTION 2: CALL MEETING (Later Notification)
+router.post('/secretary/announce-meeting', requireRole('SECRETARY'), async (req, res) => {
+    const { meetingDate, extraAgendas } = req.body; 
+
+    try {
+        // 1. Get all tabled loans to include in the agenda automatically
+        const tabledLoans = await db.query(
+            `SELECT l.id, u.full_name 
+             FROM loan_applications l 
+             JOIN users u ON l.user_id = u.id 
+             WHERE l.status = 'TABLED'`
+        );
+
+        // Build the Loan Agenda list
+        let loanAgenda = "None";
+        if (tabledLoans.rows.length > 0) {
+            loanAgenda = tabledLoans.rows.map(l => `- Review Loan #${l.id} (Applicant: ${l.full_name})`).join('\n');
+        }
+
+        // 2. SEND DETAILED MEETING NOTICE (Dynamic)
+        await notifyAll((recipient) => {
+            const fName = recipient.full_name.split(' ')[0]; // Get first name
+
+            return `📅 MEETING CALL
+Dear ${fName},
+
+The Secretary has scheduled the bi-weekly meeting.
+
+🗓 Date: ${meetingDate || "Next Thursday"}
+📍 Venue: Main Hall (or Online)
+
+AGENDA:
+1. ${extraAgendas || "General Housekeeping"}
+2. LOAN APPLICATIONS:
+${loanAgenda}
+
+Please log in to the portal to review documents before the vote.`;
+        });
+
+        res.json({ success: true, message: "Meeting agenda sent to all members." });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to send meeting notice" });
+    }
 });
 
 // GET LIVE TALLY

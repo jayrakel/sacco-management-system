@@ -1,18 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api'; // Use central secure API
 import { 
-  Wallet, CreditCard, Send, Clock, Calendar, LogOut, 
-  PiggyBank, TrendingUp, History, AlertCircle, CheckCircle, XCircle,
-  Percent, Banknote
+  Wallet, CreditCard, LogOut, PiggyBank, TrendingUp, 
+  History, AlertCircle, CheckCircle, XCircle, Percent, Banknote,
+  Clock, Bell // <--- Added Bell icon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function MemberDashboard({ user, onLogout }) {
   // --- STATE MANAGEMENT ---
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'deposit', 'repay'
+  const [activeTab, setActiveTab] = useState('dashboard'); 
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0); 
-
 
   // Financial Data
   const [savings, setSavings] = useState({ balance: 0, history: [] });
@@ -21,13 +20,16 @@ export default function MemberDashboard({ user, onLogout }) {
   const [loanState, setLoanState] = useState({ status: 'LOADING', amount_repaid: 0, amount_requested: 0 });
   const [loanForm, setLoanForm] = useState({ amount: '', purpose: '', repaymentWeeks: '' });
 
+  // Notification Data (Server Side)
+  const [serverNotifications, setServerNotifications] = useState([]);
+
   // Forms
   const [depositForm, setDepositForm] = useState({ amount: '', phoneNumber: '' });
   const [repayForm, setRepayForm] = useState({ amount: '', mpesaRef: '' });
   
+  // Toast Notification State
   const [notification, setNotification] = useState(null);
   const navigate = useNavigate();
-  const [serverNotifications, setServerNotifications] = useState([]);
 
   // --- INITIAL DATA FETCHING ---
   useEffect(() => {
@@ -35,11 +37,11 @@ export default function MemberDashboard({ user, onLogout }) {
 
      const fetchData = async () => {
         try {
-            const [balanceRes, historyRes, loanRes] = await Promise.all([
+            const [balanceRes, historyRes, loanRes, notifyRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
                 api.get('/api/loan/status'),
-                api.get('/api/loan/notifications')
+                api.get('/api/loan/notifications') 
             ]);
 
             setSavings({
@@ -47,7 +49,6 @@ export default function MemberDashboard({ user, onLogout }) {
                 history: historyRes.data
             });
             
-            // Ensure numbers are parsed correctly for math
             const loan = loanRes.data;
             if (loan.status !== 'NO_APP') {
                 loan.amount_requested = parseFloat(loan.amount_requested || 0);
@@ -55,6 +56,7 @@ export default function MemberDashboard({ user, onLogout }) {
             }
             setLoanState(loan);
 
+            // Store fetched notifications
             setServerNotifications(notifyRes.data);
 
         } catch (err) {
@@ -63,7 +65,7 @@ export default function MemberDashboard({ user, onLogout }) {
      };
 
      fetchData();
-  }, [user, refreshKey]);
+  }, [user, refreshKey, navigate]);
 
   // --- HELPERS ---
   const showNotify = (type, msg) => {
@@ -77,7 +79,6 @@ export default function MemberDashboard({ user, onLogout }) {
   };
 
   // --- HANDLERS ---
-
   const handleDeposit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -97,7 +98,6 @@ export default function MemberDashboard({ user, onLogout }) {
       e.preventDefault();
       setLoading(true);
       try {
-          // Generate a valid M-Pesa style code for simulation (e.g. QX92J...)
           const randomPart = Math.random().toString(36).substring(2, 12).toUpperCase();
           const finalRef = repayForm.mpesaRef || `PAY${randomPart}`;
           
@@ -128,9 +128,7 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const handleLoanFeePayment = async () => {
     setLoading(true);
-    // FIX: Generate a valid 10-character alphanumeric string (e.g., QX829LA102)
     const mockRef = 'MP' + Math.random().toString(36).substring(2, 10).toUpperCase();
-    
     try {
         await api.post('/api/payment/pay-fee', { loanAppId: loanState.id, mpesaRef: mockRef });
         setRefreshKey(old => old + 1);
@@ -190,9 +188,38 @@ export default function MemberDashboard({ user, onLogout }) {
          </div>
       </nav>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 mt-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8">
+
+        {/* --- TOP NOTIFICATION ALERT AREA --- */}
+        {/* Only renders if there are notifications */}
+        {serverNotifications.length > 0 && (
+            <div className="mb-8 bg-white rounded-2xl shadow-lg border-l-4 border-blue-500 p-6 animate-fade-in relative overflow-hidden">
+                <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-100">
+                    <div className="bg-blue-100 p-2 rounded-full text-blue-600">
+                        <Bell size={24} /> 
+                    </div>
+                    <h3 className="font-bold text-xl text-slate-800">
+                        New Notifications <span className="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">{serverNotifications.length}</span>
+                    </h3>
+                </div>
+                
+                <div className="space-y-3 max-h-80 overflow-y-auto custom-scrollbar pr-2">
+                    {serverNotifications.map((note) => (
+                        <div key={note.id} className="p-4 bg-blue-50 rounded-xl border border-blue-100 flex gap-4 items-start hover:bg-blue-100 transition">
+                             <div className="mt-1 text-blue-500"><AlertCircle size={18}/></div>
+                             <div className="flex-1">
+                                 <p className="text-sm text-slate-800 font-medium leading-snug">{note.message}</p>
+                                 <p className="text-xs text-slate-500 mt-1 font-mono">
+                                    {new Date(note.created_at).toLocaleDateString()} • {new Date(note.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                 </p>
+                             </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
         
-        {/* --- SAVINGS OVERVIEW CARD --- */}
+        {/* --- SAVINGS & HISTORY GRID --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             {/* Balance Card */}
             <div className="md:col-span-2 bg-slate-900 rounded-2xl p-8 text-white relative overflow-hidden shadow-2xl shadow-slate-200">
@@ -216,18 +243,20 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                 </div>
             </div>
-        
-            {/* Mini History Card */}
-            <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+
+            {/* History Column (Full Height) */}
+            <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[250px]">
                 <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider">
-                    <History size={16}/> Recent Activity
+                    <History size={16}/> Recent Transactions
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                     {savings.history.length === 0 ? (
-                        <p className="text-slate-400 text-sm italic mt-10 text-center">No transactions yet.</p>
+                        <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">
+                            No transactions yet.
+                        </div>
                     ) : (
-                        savings.history.slice(0, 4).map(tx => (
-                            <div key={tx.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
+                        savings.history.map(tx => (
+                            <div key={tx.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100 hover:border-emerald-200 transition">
                                 <div>
                                     <p className="text-xs text-slate-400">{new Date(tx.created_at).toLocaleDateString()}</p>
                                     <p className="text-xs font-mono text-slate-500">{tx.transaction_ref}</p>
