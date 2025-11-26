@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../api'; // Import the secure API
+import api from '../api'; 
 import { ShieldCheck, Lock, Mail, ChevronRight } from 'lucide-react';
 
 export default function Login({ setUser }) {
@@ -16,14 +16,12 @@ export default function Login({ setUser }) {
     setError('');
     
     try {
-      // Use the secure api instance
-      const res = await api.post('/auth/login', { email, password });
+      // FIX: Updated path to match backend '/api/auth/login'
+      const res = await api.post('/api/auth/login', { email, password });
       
-      // Backend now sets the HttpOnly cookie automatically.
-      // We only receive the user data in the body.
+      // Backend sets the cookie. We store non-sensitive user info.
       const { user } = res.data;
       
-      // Store user info for UI (name, role), but NOT the sensitive token
       localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
 
@@ -32,7 +30,8 @@ export default function Login({ setUser }) {
       navigate(paths[user.role] || '/member');
       
     } catch (err) {
-      setError(err.response?.data?.error || "Connection failed. Please try again.");
+      console.error("Login Error:", err);
+      setError(err.response?.data?.error || "Connection failed. Please check your server.");
     }
     setLoading(false);
   };

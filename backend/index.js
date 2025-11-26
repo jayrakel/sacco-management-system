@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 // 1. Security Middleware
 app.use(helmet()); 
 app.use(cors({ 
-    origin: 'http://localhost:5173',
+    origin: 'http://localhost:5173', // Ensure this matches your Frontend URL
     credentials: true 
 }));
 app.use(express.json());
@@ -40,9 +40,8 @@ const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
 
 // --- ROUTES ---
-// FIX: Changed '/auth' to '/api/auth' to match Frontend API calls
+// FIX: Changed '/auth' to '/api/auth' to be consistent with AdminDashboard and other API routes
 app.use('/api/auth', loginLimiter, authRoutes); 
-
 app.use('/api/loan', apiLimiter, loanRoutes); 
 app.use('/api/payment', apiLimiter, paymentRoutes); 
 app.use('/api/deposits', apiLimiter, depositRoutes); 
@@ -56,7 +55,7 @@ app.use((err, req, res, next) => {
 // --- INITIALIZATION LOGIC ---
 const initializeSystem = async () => {
     try {
-        // Ensure DB connection is working
+        // Test DB connection
         await db.query('SELECT NOW()');
         console.log("✅ Database Connected");
 
@@ -70,7 +69,6 @@ const initializeSystem = async () => {
             
             if (!adminPassword) {
                 console.error("❌ ERROR: Set INITIAL_ADMIN_PASSWORD in .env to create default admin.");
-                // Don't exit, just warn, so dev server keeps running
             } else {
                 const salt = await bcrypt.genSalt(10);
                 const hash = await bcrypt.hash(adminPassword, salt);
