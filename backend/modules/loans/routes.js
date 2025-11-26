@@ -137,13 +137,13 @@ router.post('/table', requireRole('SECRETARY'), validate(tableLoanSchema), async
         // 2. Update Status
         await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [loanId]);
         
-        // 3. SEND IMMEDIATE NOTIFICATION (Text-based with newlines)
+        // 3. SEND IMMEDIATE NOTIFICATION (Text-based with newlines for formatting)
         await notifyAll((recipient) => {
             return `📢 MEETING NOTICE
 
 Dear ${recipient.full_name},
 
-A loan application number ${loan.id} has been submitted by ${loan.applicant_name} for review by the committee. It is now pending review and shall be discussed in our next scheduled meeting.
+A loan application has been submitted by ${loan.applicant_name} for review by the committee. It is now pending review and shall be reviewed in our next scheduled meeting.
 
 Thank you,
 Secretary`;
@@ -161,7 +161,6 @@ router.post('/secretary/announce-meeting', requireRole('SECRETARY'), async (req,
     const { meetingDate, extraAgendas } = req.body; 
 
     try {
-        // 1. Get all tabled loans to include in the agenda automatically
         const tabledLoans = await db.query(
             `SELECT l.id, u.full_name 
              FROM loan_applications l 
@@ -169,16 +168,13 @@ router.post('/secretary/announce-meeting', requireRole('SECRETARY'), async (req,
              WHERE l.status = 'TABLED'`
         );
 
-        // Build the Loan Agenda list
         let loanAgenda = "None";
         if (tabledLoans.rows.length > 0) {
             loanAgenda = tabledLoans.rows.map(l => `- Review Loan #${l.id} (Applicant: ${l.full_name})`).join('\n');
         }
 
-        // 2. SEND DETAILED MEETING NOTICE (Dynamic)
         await notifyAll((recipient) => {
-            const fName = recipient.full_name.split(' ')[0]; // Get first name
-
+            const fName = recipient.full_name.split(' ')[0]; 
             return `📅 MEETING CALL
 Dear ${fName},
 
@@ -297,10 +293,61 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
     } catch (err) { await client.query('ROLLBACK'); res.status(500).json({ error: err.message }); } finally { client.release(); }
 });
 
-// --- 6. NOTIFICATIONS ---
+// --- 6. NOTIFICATIONS & SYSTEM ---
+
+// GET NOTIFICATIONS (Split by 2-week history)
 router.get('/notifications', async (req, res) => {
-    const result = await db.query("SELECT * FROM notifications WHERE user_id = $1 OR user_id IS NULL ORDER BY created_at DESC LIMIT 5", [req.user.id]);
-    res.json(result.rows);
+    try {
+        const result = await db.query(
+            `SELECT * FROM notifications 
+             WHERE user_id = $1 
+             ORDER BY created_at DESC`, 
+            [req.user.id]
+        );
+
+        const twoWeeksAgo = new Date();
+        twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+
+        const unread = [];
+        const history = []; // Read & recent
+        const archive = []; // Read & old (or unread & old, handled by logic below)
+
+        result.rows.forEach(note => {
+            const noteDate = new Date(note.created_at);
+            
+            // Logic: 
+            // 1. If Unread -> Always 'unread' list (user must see it).
+            // 2. If Read AND < 2 weeks -> 'history' (header dropdown).
+            // 3. If Read AND > 2 weeks -> 'archive'.
+            
+            if (!note.is_read) {
+                unread.push(note);
+            } else if (noteDate >= twoWeeksAgo) {
+                history.push(note);
+            } else {
+                archive.push(note);
+            }
+        });
+
+        res.json({ unread, history, archive });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Fetch failed" });
+    }
+});
+
+// MARK AS READ
+router.put('/notifications/:id/read', async (req, res) => {
+    try {
+        await db.query(
+            "UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2", 
+            [req.params.id, req.user.id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Update failed" });
+    }
 });
 
 module.exports = router;

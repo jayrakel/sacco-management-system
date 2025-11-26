@@ -1,189 +1,137 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { Users, Gavel, LogOut, BarChart3, Check, X, AlertCircle, FileText } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { FileText, Mic, Play, CheckSquare, Calendar } from 'lucide-react';
+import DashboardHeader from '../components/DashboardHeader';
 
 export default function SecretaryDashboard({ user, onLogout }) {
-  const [agenda, setAgenda] = useState([]); // New Applications (Status: SUBMITTED)
-  const [tally, setTally] = useState([]);   // Active Voting Process (Status: TABLED/VOTING)
-  const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+    const [applications, setApplications] = useState([]);
+    const [tally, setTally] = useState([]);
+    const [meetingForm, setMeetingForm] = useState({ date: '', agenda: '' });
+    const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    if(!user || user.role !== 'SECRETARY') navigate('/');
-    
-    // Initial Load
-    fetchAgenda();
-    fetchTally();
-
-    // Poll for live votes every 3 seconds
-    const interval = setInterval(fetchTally, 3000); 
-    return () => clearInterval(interval);
-  }, [user]);
-
-  // Fetch Pending Applications
-  const fetchAgenda = async () => {
-    try {
-      const res = await api.get('/api/loan/agenda');
-      setAgenda(res.data);
-    } catch (err) { console.error(err); }
-  };
-
-  // Fetch Live Votes
-  const fetchTally = async () => {
-    try {
-      const res = await api.get('/api/loan/secretary/live-tally');
-      setTally(res.data);
-    } catch (err) { console.error(err); }
-  };
-
-  // Action: Table the Motion (Triggers notification to members)
-  const handleTableLoan = async (loanId) => {
-    setLoading(true);
-    try {
-        await api.post('/api/loan/table', { loanId });
-        await fetchAgenda(); // Refresh agenda list
-        await fetchTally();  // It should now appear in the monitor
-        alert("Motion Tabled! Notification sent to all members.");
-    } catch (err) { 
-        alert("Error: " + (err.response?.data?.error || "Failed to table"));
-    }
-    setLoading(false);
-  };
-
-  // Action: Finalize Vote
-  const finalize = async (loanId, decision) => {
-      if(!confirm(`Confirm: ${decision} this loan based on the vote result?`)) return;
-      try {
-        await api.post('/api/loan/secretary/finalize', { loanId, decision });
-        fetchTally(); // Should disappear from active monitor
-      } catch (err) {
-          alert("Action failed: " + (err.response?.data?.error || "Unknown error"));
-      }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-      {/* Navbar */}
-      <nav className="bg-purple-900 text-white px-6 py-4 flex justify-between items-center shadow-lg sticky top-0 z-50">
-         <div className="flex items-center gap-3">
-             <div className="bg-purple-700 p-2 rounded"><Users size={20}/></div>
-             <span className="font-bold tracking-wide">Secretary Portal</span>
-         </div>
-         <button onClick={onLogout} className="text-sm bg-purple-800 hover:bg-purple-700 px-4 py-2 rounded-lg flex items-center gap-2 transition border border-purple-700">
-            <LogOut size={16}/> Logout
-         </button>
-      </nav>
-
-      <main className="max-w-6xl mx-auto mt-8 p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
+    useEffect(() => {
+        api.get('/api/loan/agenda').then(res => setApplications(res.data));
         
-        {/* COLUMN 1: NEW AGENDA ITEMS (Pending Tabling) */}
-        <div>
-            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <FileText className="text-purple-600"/> New Applications
-            </h2>
-            
-            {agenda.length === 0 ? (
-                <div className="bg-white p-8 rounded-xl text-center border-2 border-dashed border-slate-200">
-                    <p className="text-slate-400">No new loan applications received.</p>
-                </div>
-            ) : (
-                <div className="space-y-4">
-                    {agenda.map(loan => (
-                        <div key={loan.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                            <div className="flex justify-between items-start mb-2">
-                                <h4 className="font-bold text-lg">{loan.full_name}</h4>
-                                <span className="bg-purple-50 text-purple-700 text-xs font-bold px-2 py-1 rounded">SUBMITTED</span>
-                            </div>
-                            <p className="text-slate-600 text-sm mb-4">Requests <span className="font-bold">KES {parseInt(loan.amount_requested).toLocaleString()}</span> for "{loan.purpose}"</p>
-                            
-                            <button 
-                                onClick={() => handleTableLoan(loan.id)}
-                                disabled={loading}
-                                className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-bold text-sm transition flex items-center justify-center gap-2"
-                            >
-                                <Gavel size={16}/> Table Motion for AGM
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
+        const interval = setInterval(() => {
+             api.get('/api/loan/secretary/live-tally').then(res => setTally(res.data));
+        }, 3000); // Live poll every 3s
 
-        {/* COLUMN 2: LIVE VOTING MONITOR (Active Meetings) */}
-        <div>
-            <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <BarChart3 className="text-emerald-600"/> Active Voting Sessions
-            </h2>
+        return () => clearInterval(interval);
+    }, [refreshKey]);
 
-            {tally.length === 0 ? (
-                <div className="bg-white p-8 rounded-xl text-center border-2 border-dashed border-slate-200">
-                    <div className="mx-auto w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-3 text-slate-400">
-                        <AlertCircle size={24}/>
+    const tableLoan = async (loanId) => {
+        try {
+            await api.post('/api/loan/table', { loanId });
+            setRefreshKey(k => k + 1);
+            alert("Loan tabled! Notification sent to members.");
+        } catch (err) { alert("Error tabling loan"); }
+    };
+
+    const announceMeeting = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post('/api/loan/secretary/announce-meeting', { 
+                meetingDate: meetingForm.date, 
+                extraAgendas: meetingForm.agenda 
+            });
+            alert("Meeting Announced!");
+            setMeetingForm({ date: '', agenda: '' });
+        } catch (err) { alert("Failed to announce"); }
+    };
+
+    const finalizeVote = async (loanId, decision) => {
+        if(!window.confirm(`Are you sure you want to ${decision} this loan?`)) return;
+        try {
+            await api.post('/api/loan/secretary/finalize', { loanId, decision });
+            setRefreshKey(k => k + 1);
+        } catch (err) { alert("Error finalizing"); }
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+            <DashboardHeader user={user} onLogout={onLogout} title="Secretary Portal" />
+
+            <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+                
+                {/* LEFT COL: ACTIONS */}
+                <div className="space-y-8">
+                    
+                    {/* Meeting Announcer */}
+                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-700">
+                            <Calendar className="text-purple-600"/> Call for Meeting
+                        </h3>
+                        <form onSubmit={announceMeeting} className="space-y-4">
+                            <input type="datetime-local" required className="w-full border p-2 rounded-lg" value={meetingForm.date} onChange={e=>setMeetingForm({...meetingForm, date:e.target.value})}/>
+                            <textarea rows="3" placeholder="Additional Agenda Items..." className="w-full border p-2 rounded-lg" value={meetingForm.agenda} onChange={e=>setMeetingForm({...meetingForm, agenda:e.target.value})}/>
+                            <button className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold">Send Notification</button>
+                        </form>
                     </div>
-                    <p className="text-slate-400">No motions currently on the floor.</p>
-                </div>
-            ) : (
-                <div className="space-y-6">
-                    {tally.map(item => {
-                        const yes = parseInt(item.yes_votes);
-                        const no = parseInt(item.no_votes);
-                        const total = yes + no;
-                        const yesPercent = total === 0 ? 0 : (yes / total) * 100;
 
-                        return (
-                            <div key={item.id} className="bg-white p-6 rounded-xl shadow-md border border-slate-200 relative overflow-hidden">
-                                {/* Live Badge */}
-                                <div className="absolute top-0 right-0 p-4">
-                                    <span className={`text-xs font-bold px-2 py-1 rounded ${
-                                        item.status === 'VOTING' 
-                                        ? 'bg-red-100 text-red-600 animate-pulse' 
-                                        : 'bg-amber-100 text-amber-700'
-                                    }`}>
-                                        {item.status === 'VOTING' ? '● LIVE' : 'WAITING'}
-                                    </span>
-                                </div>
-
-                                <div className="mb-4 pr-12">
-                                    <h3 className="font-bold text-slate-800">Loan #{item.id} - {item.full_name}</h3>
-                                    <p className="text-xs text-slate-500">Amount: KES {parseInt(item.amount_requested).toLocaleString()}</p>
-                                </div>
-
-                                {/* Voting Visuals */}
-                                <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 mb-4">
-                                    <div className="flex justify-between items-end mb-2 text-xs font-bold">
-                                        <span className="text-emerald-600">{yes} YES</span>
-                                        <span className="text-red-500">{no} NO</span>
+                    {/* Incoming Applications */}
+                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-700">
+                            <FileText className="text-blue-600"/> Incoming Applications
+                        </h3>
+                        {applications.length === 0 ? <p className="text-slate-400 text-sm">No new applications.</p> : (
+                            <div className="space-y-3">
+                                {applications.map(app => (
+                                    <div key={app.id} className="p-4 border border-slate-100 rounded-xl bg-slate-50">
+                                        <div className="flex justify-between mb-2">
+                                            <span className="font-bold text-slate-700">{app.full_name}</span>
+                                            <span className="text-blue-600 font-bold">KES {parseInt(app.amount_requested).toLocaleString()}</span>
+                                        </div>
+                                        <p className="text-xs text-slate-500 mb-3">{app.purpose}</p>
+                                        <button onClick={() => tableLoan(app.id)} className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-bold uppercase tracking-wider">Table Motion</button>
                                     </div>
-                                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
-                                        <div className="bg-emerald-500 h-full transition-all duration-1000 ease-out" style={{ width: `${yesPercent}%` }}></div>
-                                        <div className="bg-red-500 h-full transition-all duration-1000 ease-out flex-1"></div>
-                                    </div>
-                                </div>
-
-                                {/* Actions (Only available during Voting or if Tabled to force close) */}
-                                {item.status === 'VOTING' ? (
-                                    <div className="flex gap-2">
-                                        <button onClick={() => finalize(item.id, 'APPROVED')} className="flex-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 py-2 rounded font-bold text-xs flex items-center justify-center gap-1">
-                                            <Check size={14}/> Pass
-                                        </button>
-                                        <button onClick={() => finalize(item.id, 'REJECTED')} className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 py-2 rounded font-bold text-xs flex items-center justify-center gap-1">
-                                            <X size={14}/> Reject
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <p className="text-xs text-center text-slate-400 italic">
-                                        Waiting for Chair (Admin) to open voting...
-                                    </p>
-                                )}
+                                ))}
                             </div>
-                        );
-                    })}
+                        )}
+                    </div>
                 </div>
-            )}
-        </div>
 
-      </main>
-    </div>
-  );
+                {/* RIGHT COL: LIVE VOTING */}
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 h-fit">
+                    <h3 className="font-bold text-lg flex items-center gap-2 mb-6 text-slate-700">
+                        <Mic className="text-red-500 animate-pulse"/> Live Voting Floor
+                    </h3>
+                    
+                    {tally.length === 0 ? <p className="text-slate-400 text-center py-12">No active voting sessions.</p> : (
+                        <div className="space-y-6">
+                            {tally.map(t => (
+                                <div key={t.id} className="border-b border-slate-100 pb-6 last:border-0">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <div>
+                                            <span className="text-xs font-bold text-slate-400 uppercase">Loan #{t.id}</span>
+                                            <h4 className="font-bold text-slate-800">{t.full_name}</h4>
+                                        </div>
+                                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${t.status === 'VOTING' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                            {t.status}
+                                        </span>
+                                    </div>
+
+                                    <div className="flex gap-4 mb-4">
+                                        <div className="flex-1 bg-green-50 border border-green-100 p-3 rounded-lg text-center">
+                                            <span className="block text-2xl font-bold text-green-600">{t.yes_votes || 0}</span>
+                                            <span className="text-xs text-green-800 uppercase font-bold">Yes</span>
+                                        </div>
+                                        <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-lg text-center">
+                                            <span className="block text-2xl font-bold text-red-600">{t.no_votes || 0}</span>
+                                            <span className="text-xs text-red-800 uppercase font-bold">No</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <button onClick={() => finalizeVote(t.id, 'APPROVED')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold text-sm">Approve</button>
+                                        <button onClick={() => finalizeVote(t.id, 'REJECTED')} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-bold text-sm">Reject</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+            </main>
+        </div>
+    );
 }
