@@ -3,17 +3,14 @@ const router = express.Router();
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 
-// GET ALL SETTINGS (Accessible by ALL Authenticated Users)
-// Removed requireRole('ADMIN') so members can see the multiplier
+// GET ALL SETTINGS
+// Authenticated users can read settings (Admin needs list, Member needs values)
 router.get('/', authenticateUser, async (req, res) => {
     try {
-        const result = await db.query("SELECT * FROM system_settings");
-        // Convert array to object for easier lookup { key: value }
-        const settings = {};
-        result.rows.forEach(row => {
-            settings[row.setting_key] = row.setting_value;
-        });
-        res.json(settings);
+        const result = await db.query("SELECT * FROM system_settings ORDER BY setting_key ASC");
+        // FIX: Return the raw array (rows) so Admin Dashboard can map() over it
+        // and access the 'description' field.
+        res.json(result.rows); 
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch settings" });

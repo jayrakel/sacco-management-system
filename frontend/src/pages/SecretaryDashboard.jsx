@@ -1,140 +1,271 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { FileText, Mic, Play, CheckSquare, Calendar, RefreshCw } from 'lucide-react';
+import { 
+    ClipboardList, 
+    CheckCircle, 
+    FileText, 
+    Megaphone, 
+    BarChart3, 
+    XCircle, 
+    Calendar,
+    Clock
+} from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function SecretaryDashboard({ user, onLogout }) {
-    const [applications, setApplications] = useState([]);
-    const [tally, setTally] = useState([]);
-    const [meetingForm, setMeetingForm] = useState({ date: '', agenda: '' });
+    // Tabs: 'review' (Incoming) | 'meetings' (Voting/Tally)
+    const [activeTab, setActiveTab] = useState('review');
+    
+    // Data States
+    const [reviewQueue, setReviewQueue] = useState([]); // Loans waiting to be tabled
+    const [liveTally, setLiveTally] = useState([]);     // Loans currently being voted on
+    const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
 
+    // Form for meeting announcement
+    const [meetingForm, setMeetingForm] = useState({ meetingDate: '', extraAgendas: '' });
+
+    // Fetch Data
     useEffect(() => {
-        const fetchData = () => {
-            api.get('/api/loan/agenda').then(res => setApplications(res.data)).catch(err => console.error(err));
-            api.get('/api/loan/secretary/live-tally').then(res => setTally(res.data)).catch(err => console.error(err));
+        const fetchData = async () => {
+            try {
+                if (activeTab === 'review') {
+                    // Fetch submitted loans waiting for secretary review
+                    const res = await api.get('/api/loan/agenda');
+                    setReviewQueue(res.data);
+                } else if (activeTab === 'meetings') {
+                    // Fetch live voting results
+                    const res = await api.get('/api/loan/secretary/live-tally');
+                    setLiveTally(res.data);
+                }
+            } catch (err) {
+                console.error("Error loading data", err);
+            }
         };
+        fetchData();
+    }, [activeTab, refreshKey]);
 
-        fetchData(); // Initial fetch
+    // --- ACTIONS ---
+
+    // 1. Table a Motion (Moves loan from SUBMITTED -> TABLED)
+    // This is the step that updates the Admin Dashboard!
+    const handleTableMotion = async (loanId) => {
+        if (!window.confirm("Table this application? It will become visible to the Chairperson/Admin.")) return;
         
-        const interval = setInterval(fetchData, 3000); // Live poll every 3s
-        return () => clearInterval(interval);
-    }, [refreshKey]);
-
-    const tableLoan = async (loanId) => {
+        setLoading(true);
         try {
             await api.post('/api/loan/table', { loanId });
-            setRefreshKey(k => k + 1); // Force refresh to update UI immediately
-            alert("Loan tabled! Admin has been notified.");
-        } catch (err) { alert("Error tabling loan"); }
+            alert("Motion tabled successfully! Admin can now open voting.");
+            setRefreshKey(old => old + 1);
+        } catch (err) {
+            alert(err.response?.data?.error || "Failed to table motion");
+        }
+        setLoading(false);
     };
 
-    const announceMeeting = async (e) => {
-        e.preventDefault();
-        try {
-            await api.post('/api/loan/secretary/announce-meeting', { 
-                meetingDate: meetingForm.date, 
-                extraAgendas: meetingForm.agenda 
-            });
-            alert("Meeting Announced!");
-            setMeetingForm({ date: '', agenda: '' });
-        } catch (err) { alert("Failed to announce"); }
-    };
+    // 2. Finalize Vote (Moves loan from VOTING -> APPROVED/REJECTED)
+    const handleFinalize = async (loanId, decision) => {
+        const action = decision === 'APPROVED' ? 'APPROVE' : 'REJECT';
+        if (!window.confirm(`Are you sure you want to ${action} this loan based on the votes?`)) return;
 
-    const finalizeVote = async (loanId, decision) => {
-        if(!window.confirm(`Are you sure you want to ${decision} this loan?`)) return;
         try {
             await api.post('/api/loan/secretary/finalize', { loanId, decision });
-            setRefreshKey(k => k + 1);
-        } catch (err) { alert("Error finalizing"); }
+            alert(`Loan ${action}D successfully!`);
+            setRefreshKey(old => old + 1);
+        } catch (err) {
+            alert("Failed to finalize vote");
+        }
     };
+
+    // 3. Announce Meeting
+    const handleAnnounce = async (e) => {
+        e.preventDefault();
+        try {
+            await api.post('/api/loan/secretary/announce-meeting', meetingForm);
+            alert("Meeting notification sent to all members!");
+            setMeetingForm({ meetingDate: '', extraAgendas: '' });
+        } catch (err) {
+            alert("Failed to send announcement");
+        }
+    };
+
+    // --- UI HELPERS ---
+    const renderTabButton = (id, label, icon) => (
+        <button 
+            onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-sm transition ${
+                activeTab === id ? 'bg-white text-indigo-900 shadow-md' : 'text-indigo-200 hover:bg-indigo-800 hover:text-white'
+            }`}
+        >
+            {icon} {label}
+        </button>
+    );
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-            <DashboardHeader user={user} onLogout={onLogout} title="Secretary Portal" />
+            <DashboardHeader user={user} onLogout={onLogout} title="Secretary Panel" />
 
-            <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 pb-12">
                 
-                {/* LEFT COL: ACTIONS */}
-                <div className="space-y-8">
-                    
-                    {/* Meeting Announcer */}
-                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-700">
-                            <Calendar className="text-purple-600"/> Call for Meeting
-                        </h3>
-                        <form onSubmit={announceMeeting} className="space-y-4">
-                            <input type="datetime-local" required className="w-full border p-2 rounded-lg" value={meetingForm.date} onChange={e=>setMeetingForm({...meetingForm, date:e.target.value})}/>
-                            <textarea rows="3" placeholder="Additional Agenda Items..." className="w-full border p-2 rounded-lg" value={meetingForm.agenda} onChange={e=>setMeetingForm({...meetingForm, agenda:e.target.value})}/>
-                            <button className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold">Send Notification</button>
-                        </form>
+                {/* Header */}
+                <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div>
+                        <h1 className="text-2xl font-bold flex items-center gap-3">
+                            <ClipboardList className="text-indigo-400" /> Secretary Dashboard
+                        </h1>
+                        <p className="text-indigo-300 text-sm mt-1">Prepare agendas and record meeting minutes.</p>
                     </div>
-
-                    {/* Incoming Applications */}
-                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                        <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-700">
-                            <FileText className="text-blue-600"/> Incoming Applications
-                        </h3>
-                        {applications.length === 0 ? <p className="text-slate-400 text-sm flex items-center gap-2"><RefreshCw size={14} className="animate-spin"/> Waiting for new submissions...</p> : (
-                            <div className="space-y-3">
-                                {applications.map(app => (
-                                    <div key={app.id} className="p-4 border border-slate-100 rounded-xl bg-slate-50">
-                                        <div className="flex justify-between mb-2">
-                                            <span className="font-bold text-slate-700">{app.full_name}</span>
-                                            <span className="text-blue-600 font-bold">KES {parseInt(app.amount_requested).toLocaleString()}</span>
-                                        </div>
-                                        <p className="text-xs text-slate-500 mb-3">{app.purpose}</p>
-                                        <div className="flex gap-2 text-xs text-slate-400 mb-3">
-                                            <span>{app.repayment_weeks} weeks</span>
-                                        </div>
-                                        <button onClick={() => tableLoan(app.id)} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition">Table Motion</button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                    <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50">
+                        {renderTabButton('review', 'Table Motions', <FileText size={16}/>)}
+                        {renderTabButton('meetings', 'Live Voting & Minutes', <BarChart3 size={16}/>)}
                     </div>
                 </div>
 
-                {/* RIGHT COL: LIVE VOTING */}
-                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 h-fit">
-                    <h3 className="font-bold text-lg flex items-center gap-2 mb-6 text-slate-700">
-                        <Mic className="text-red-500 animate-pulse"/> Live Voting Floor
-                    </h3>
-                    
-                    {tally.length === 0 ? <p className="text-slate-400 text-center py-12">No active voting sessions.</p> : (
-                        <div className="space-y-6">
-                            {tally.map(t => (
-                                <div key={t.id} className="border-b border-slate-100 pb-6 last:border-0">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <div>
-                                            <span className="text-xs font-bold text-slate-400 uppercase">Loan #{t.id}</span>
-                                            <h4 className="font-bold text-slate-800">{t.full_name}</h4>
+                {/* 1. REVIEW & TABLE SECTION */}
+                {activeTab === 'review' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
+                        {/* LIST OF PENDING LOANS */}
+                        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Clock className="text-amber-500" /> Applications Pending Tabling
+                                </h2>
+                                <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-full">
+                                    {reviewQueue.length} Pending
+                                </span>
+                            </div>
+                            
+                            {reviewQueue.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400 italic">
+                                    No new applications to review.
+                                </div>
+                            ) : (
+                                <div className="divide-y divide-slate-100">
+                                    {reviewQueue.map(item => (
+                                        <div key={item.id} className="p-6 hover:bg-slate-50 transition">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div>
+                                                    <h3 className="font-bold text-slate-800 text-lg">{item.full_name}</h3>
+                                                    <span className="text-xs font-mono text-slate-400">REF: #{item.id}</span>
+                                                </div>
+                                                <div className="text-right">
+                                                    <span className="block text-2xl font-bold text-indigo-600">
+                                                        KES {parseFloat(item.amount_requested).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="bg-slate-50 p-3 rounded-lg text-sm text-slate-600 border border-slate-100 mb-4">
+                                                <span className="font-bold text-slate-400 uppercase text-xs">Purpose:</span> "{item.purpose}"
+                                            </div>
+                                            <button 
+                                                onClick={() => handleTableMotion(item.id)}
+                                                disabled={loading}
+                                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-indigo-100 transition flex items-center justify-center gap-2"
+                                            >
+                                                {loading ? 'Processing...' : <><FileText size={16}/> Table Motion for Agenda</>}
+                                            </button>
                                         </div>
-                                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${t.status === 'VOTING' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                            {t.status}
-                                        </span>
-                                    </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
-                                    <div className="flex gap-4 mb-4">
-                                        <div className="flex-1 bg-green-50 border border-green-100 p-3 rounded-lg text-center">
-                                            <span className="block text-2xl font-bold text-green-600">{t.yes_votes || 0}</span>
-                                            <span className="text-xs text-green-800 uppercase font-bold">Yes</span>
-                                        </div>
-                                        <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-lg text-center">
-                                            <span className="block text-2xl font-bold text-red-600">{t.no_votes || 0}</span>
-                                            <span className="text-xs text-red-800 uppercase font-bold">No</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="flex gap-2">
-                                        <button onClick={() => finalizeVote(t.id, 'APPROVED')} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold text-sm">Approve</button>
-                                        <button onClick={() => finalizeVote(t.id, 'REJECTED')} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-bold text-sm">Reject</button>
+                        {/* MEETING ANNOUNCER */}
+                        <div className="bg-indigo-600 text-white rounded-2xl p-6 shadow-lg h-fit">
+                            <h3 className="font-bold text-lg flex items-center gap-2 mb-4">
+                                <Megaphone size={20}/> Call Meeting
+                            </h3>
+                            <form onSubmit={handleAnnounce} className="space-y-4">
+                                <div>
+                                    <label className="text-xs uppercase font-bold text-indigo-200 block mb-1">Date & Time</label>
+                                    <div className="relative">
+                                        <Calendar className="absolute left-3 top-3 text-indigo-500" size={16}/>
+                                        <input 
+                                            type="datetime-local" 
+                                            required
+                                            className="w-full p-2.5 pl-10 rounded-lg bg-white text-slate-800 text-sm border-none outline-none"
+                                            value={meetingForm.meetingDate}
+                                            onChange={e => setMeetingForm({...meetingForm, meetingDate: e.target.value})}
+                                        />
                                     </div>
                                 </div>
-                            ))}
+                                <div>
+                                    <label className="text-xs uppercase font-bold text-indigo-200 block mb-1">Extra Agenda Items</label>
+                                    <textarea 
+                                        rows="3"
+                                        className="w-full p-3 rounded-lg bg-white text-slate-800 text-sm border-none outline-none"
+                                        placeholder="e.g. Review annual budget..."
+                                        value={meetingForm.extraAgendas}
+                                        onChange={e => setMeetingForm({...meetingForm, extraAgendas: e.target.value})}
+                                    ></textarea>
+                                </div>
+                                <button className="w-full bg-white text-indigo-700 hover:bg-indigo-50 font-bold py-3 rounded-xl transition shadow-lg">
+                                    Send Notification
+                                </button>
+                            </form>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
+
+                {/* 2. MEETINGS & VOTING SECTION */}
+                {activeTab === 'meetings' && (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                            <div className="border-b border-slate-100 pb-4 mb-4">
+                                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <BarChart3 className="text-emerald-600" /> Live Voting Tally
+                                </h2>
+                                <p className="text-slate-500 text-sm mt-1">Monitor votes in real-time and finalize decisions.</p>
+                            </div>
+
+                            {liveTally.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400 border-2 border-dashed border-slate-100 rounded-xl">
+                                    No active voting sessions.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {liveTally.map(item => (
+                                        <div key={item.id} className="border border-slate-200 rounded-xl p-5 hover:border-indigo-200 transition bg-slate-50">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <h3 className="font-bold text-slate-800">{item.full_name}</h3>
+                                                <span className={`text-xs font-bold px-2 py-1 rounded ${item.status === 'VOTING' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                    {item.status}
+                                                </span>
+                                            </div>
+                                            
+                                            {/* Progress Bar */}
+                                            <div className="mb-4">
+                                                <div className="flex justify-between text-xs mb-1 font-bold">
+                                                    <span className="text-emerald-600">YES: {item.yes_votes}</span>
+                                                    <span className="text-red-600">NO: {item.no_votes}</span>
+                                                </div>
+                                                <div className="h-3 w-full bg-gray-200 rounded-full overflow-hidden flex">
+                                                    <div className="h-full bg-emerald-500 transition-all duration-500" style={{ flex: item.yes_votes }}></div>
+                                                    <div className="h-full bg-red-500 transition-all duration-500" style={{ flex: item.no_votes }}></div>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex gap-3">
+                                                <button 
+                                                    onClick={() => handleFinalize(item.id, 'APPROVED')}
+                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2"
+                                                >
+                                                    <CheckCircle size={16}/> Approve
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleFinalize(item.id, 'REJECTED')}
+                                                    className="flex-1 bg-white hover:bg-red-50 text-red-600 border border-red-200 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2"
+                                                >
+                                                    <XCircle size={16}/> Reject
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
 
             </main>
         </div>

@@ -10,6 +10,7 @@ router.use(authenticateUser);
 
 // --- 1. COMMON ROUTES ---
 
+// GET MY LOAN STATUS
 router.get('/status', async (req, res) => {
     try {
         const result = await db.query(
@@ -26,16 +27,22 @@ router.get('/status', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Server Error" }); }
 });
 
+// START APPLICATION (Restored Fee Logic)
 router.post('/init', async (req, res) => {
     try {
         const activeCheck = await db.query("SELECT id FROM loan_applications WHERE user_id = $1 AND status NOT IN ('REJECTED', 'COMPLETED') LIMIT 1", [req.user.id]);
         if(activeCheck.rows.length > 0) return res.status(400).json({ error: "Active application exists" });
-        // Fix: Start with FEE_PAID to skip payment step for testing
-        const result = await db.query("INSERT INTO loan_applications (user_id, status, fee_amount) VALUES ($1, 'FEE_PAID', 0) RETURNING *", [req.user.id]);
+        
+        // UPDATE: Changed status to 'FEE_PENDING' and amount to 500
+        const result = await db.query(
+            "INSERT INTO loan_applications (user_id, status, fee_amount) VALUES ($1, 'FEE_PENDING', 500) RETURNING *", 
+            [req.user.id]
+        );
         res.json(result.rows[0]);
     } catch (err) { res.status(500).json({ error: "Init failed" }); }
 });
 
+// SUBMIT DETAILS (Dynamic Limit Check)
 router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
     const { loanAppId, amount, purpose, repaymentWeeks } = req.body;
     try {
@@ -45,9 +52,9 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
         
         const savingsRes = await db.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1 AND status = 'COMPLETED'", [req.user.id]);
         
-        // DYNAMIC SETTING FETCH
-        const multiplierStr = await getSetting('loan_multiplier');
-        const multiplier = parseFloat(multiplierStr || 3); // Default to 3 if missing
+        // DYNAMIC: Get multiplier from settings (default 3)
+        const multiplierVal = await getSetting('loan_multiplier');
+        const multiplier = parseFloat(multiplierVal) || 3;
         
         const maxLimit = (parseFloat(savingsRes.rows[0].total || 0)) * multiplier;
         
@@ -57,20 +64,35 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
         res.json({ success: true });
     } catch (err) { 
         console.error(err);
-        res.status(500).json({ error: "Error submitting loan" }); 
+        res.status(500).json({ error: "Error submitting loan details" }); 
     }
 });
 
-// UPDATED: Finalize and Notify Secretary
+// FINAL SUBMISSION (Dynamic Guarantor Check)
 router.post('/final-submit', async (req, res) => {
     const { loanAppId } = req.body;
     try {
-        const guarantors = await db.query("SELECT COUNT(*) FROM loan_guarantors WHERE loan_application_id=$1 AND status='ACCEPTED'", [loanAppId]);
-        if (parseInt(guarantors.rows[0].count) < 1) return res.status(400).json({ error: "At least 1 guarantor must accept before submission." });
+        // 1. Fetch dynamic setting (default 2)
+        const settingVal = await getSetting('min_guarantors');
+        const minGuarantors = parseInt(settingVal) || 2;
+
+        // 2. Count accepted guarantors
+        const guarantors = await db.query(
+            "SELECT COUNT(*) FROM loan_guarantors WHERE loan_application_id=$1 AND status='ACCEPTED'", 
+            [loanAppId]
+        );
+        
+        const acceptedCount = parseInt(guarantors.rows[0].count);
+
+        if (acceptedCount < minGuarantors) {
+            return res.status(400).json({ 
+                error: `You need at least ${minGuarantors} accepted guarantors to submit (Current: ${acceptedCount}).` 
+            });
+        }
 
         await db.query("UPDATE loan_applications SET status='SUBMITTED' WHERE id=$1", [loanAppId]);
         
-        // UPDATED: Notify all secretaries
+        // Notify secretaries
         const secretaries = await db.query("SELECT id FROM users WHERE role='SECRETARY'");
         const notifications = secretaries.rows.map(s => 
             db.query("INSERT INTO notifications (user_id, message) VALUES ($1, $2)", [s.id, `📝 ACTION REQUIRED: New Loan Application #${loanAppId} is ready for tabling.`])
@@ -111,16 +133,37 @@ router.get('/guarantors', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
 });
 
+// ADD GUARANTOR (Updated to Sync Database)
 router.post('/guarantors/add', async (req, res) => {
     const { guarantorId, loanId } = req.body;
     try {
-        await db.query("INSERT INTO loan_guarantors (loan_application_id, guarantor_id) VALUES ($1, $2)", [loanId, guarantorId]);
+        // 1. Insert into the relational table (The Source of Truth)
+        await db.query(
+            "INSERT INTO loan_guarantors (loan_application_id, guarantor_id) VALUES ($1, $2)", 
+            [loanId, guarantorId]
+        );
+
+        // 2. SYNC: Update the parent 'loan_applications' table
+        // This subquery pulls all guarantor IDs for this loan and saves them into the array column
+        await db.query(
+            `UPDATE loan_applications 
+             SET guarantor_ids = ARRAY(
+                 SELECT guarantor_id FROM loan_guarantors 
+                 WHERE loan_application_id = $1
+             )
+             WHERE id = $1`,
+            [loanId]
+        );
+
+        // 3. Notify the guarantor
         const app = await db.query("SELECT full_name FROM users WHERE id=$1", [req.user.id]);
         await notifyUser(guarantorId, `🤝 GUARANTOR REQUEST: ${app.rows[0].full_name} has requested you to guarantee their loan #${loanId}.`);
+
         res.json({ success: true });
     } catch (err) { 
-        if(err.code === '23505') return res.status(400).json({ error: "Already added" });
-        res.status(500).json({ error: "Failed" }); 
+        if(err.code === '23505') return res.status(400).json({ error: "Guarantor already added" });
+        console.error(err);
+        res.status(500).json({ error: "Failed to add guarantor" }); 
     }
 });
 
@@ -155,7 +198,25 @@ router.post('/guarantors/respond', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Action failed" }); }
 });
 
-// --- ADMIN/SECRETARY ROUTES ---
+
+
+// --- ADMIN ROUTES ---
+
+// NEW: Get All Loans (Registry)
+router.get('/admin/all', requireRole('ADMIN'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT l.*, u.full_name 
+             FROM loan_applications l 
+             JOIN users u ON l.user_id = u.id 
+             ORDER BY l.created_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Fetch error" }); 
+    }
+});
 
 router.get('/admin/agenda', requireRole('ADMIN'), async (req, res) => {
     try {
@@ -177,6 +238,8 @@ router.post('/admin/open-voting', requireRole('ADMIN'), async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Failed to open voting" }); }
 });
+
+// --- VOTING ROUTES ---
 
 router.get('/vote/open', async (req, res) => {
     try {
@@ -203,6 +266,8 @@ router.post('/vote', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Vote failed" }); }
 });
+
+// --- SECRETARY ROUTES ---
 
 router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
     try {
@@ -279,6 +344,8 @@ router.post('/secretary/finalize', requireRole('SECRETARY'), async (req, res) =>
     } catch (err) { res.status(500).json({ error: "Finalize Error" }); }
 });
 
+// --- TREASURER ROUTES ---
+
 router.get('/treasury/queue', requireRole('TREASURER'), async (req, res) => {
     try {
         const result = await db.query(
@@ -320,6 +387,8 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
     } catch (err) { await client.query('ROLLBACK'); res.status(500).json({ error: err.message }); } finally { client.release(); }
 });
 
+// --- NOTIFICATIONS ---
+
 router.get('/notifications', async (req, res) => {
     try {
         const result = await db.query("SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC", [req.user.id]);
@@ -338,22 +407,6 @@ router.get('/notifications', async (req, res) => {
 router.put('/notifications/:id/read', async (req, res) => {
     try { await db.query("UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]); res.json({ success: true }); } 
     catch (err) { res.status(500).json({ error: "Update failed" }); }
-});
-
-// GET ALL LOANS (Admin Registry)
-router.get('/admin/all', requireRole('ADMIN'), async (req, res) => {
-    try {
-        const result = await db.query(
-            `SELECT l.*, u.full_name 
-             FROM loan_applications l 
-             JOIN users u ON l.user_id = u.id 
-             ORDER BY l.created_at DESC`
-        );
-        res.json(result.rows);
-    } catch (err) { 
-        console.error(err);
-        res.status(500).json({ error: "Fetch error" }); 
-    }
 });
 
 module.exports = router;

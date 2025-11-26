@@ -23,7 +23,7 @@ export default function MemberDashboard({ user, onLogout }) {
   const [incomingRequests, setIncomingRequests] = useState([]);
   
   // System Settings (Dynamic)
-  const [settings, setSettings] = useState({ loan_multiplier: 3 }); 
+  const [multiplier, setMultiplier] = useState(3); // Default to 3
 
   // Forms
   const [loanForm, setLoanForm] = useState({ amount: '', purpose: '', repaymentWeeks: '' });
@@ -36,23 +36,23 @@ export default function MemberDashboard({ user, onLogout }) {
      if(!user) { navigate('/'); return; }
      const fetchData = async () => {
         try {
-            // Added settings fetch to the Promise.all
             const [balanceRes, historyRes, loanRes, reqRes, voteRes, settingsRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
                 api.get('/api/loan/status'),
                 api.get('/api/loan/guarantors/requests'),
                 api.get('/api/loan/vote/open'),
-                api.get('/api/settings') // Fetch settings
+                api.get('/api/settings')
             ]);
 
             setSavings({ balance: balanceRes.data.balance, history: historyRes.data });
             setIncomingRequests(reqRes.data);
             setVotingQueue(voteRes.data);
             
-            // Update settings state
-            if (settingsRes.data) {
-                setSettings(settingsRes.data);
+            // FIX: Handle Array response from backend
+            if (Array.isArray(settingsRes.data)) {
+                const multSetting = settingsRes.data.find(s => s.setting_key === 'loan_multiplier');
+                if (multSetting) setMultiplier(parseFloat(multSetting.setting_value));
             }
 
             const loan = loanRes.data;
@@ -93,8 +93,8 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const handleLoanSubmit = async (e) => { 
       e.preventDefault(); 
-      // Client-side validation using dynamic setting
-      const maxLoan = savings.balance * settings.loan_multiplier;
+      // Use state multiplier
+      const maxLoan = savings.balance * multiplier;
       if (parseInt(loanForm.amount) > maxLoan) {
           showNotify('error', `Limit exceeded! Max: ${maxLoan.toLocaleString()}`);
           return;
@@ -220,7 +220,7 @@ export default function MemberDashboard({ user, onLogout }) {
                     <div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
                         <div>
                             <h4 className="text-2xl font-bold">Apply for Loan</h4>
-                            <p>Get up to <span className="font-bold text-yellow-300">{settings.loan_multiplier}x</span> savings.</p>
+                            <p>Get up to <span className="font-bold text-yellow-300">{multiplier}x</span> savings.</p>
                         </div>
                         <button onClick={handleLoanStart} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold">Start Application</button>
                     </div>
@@ -234,7 +234,7 @@ export default function MemberDashboard({ user, onLogout }) {
                         <form onSubmit={handleLoanSubmit} className="space-y-4 max-w-xl">
                             <div>
                                 <input type="number" required className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Amount" value={loanForm.amount} onChange={e => setLoanForm({...loanForm, amount: e.target.value})} />
-                                <p className="text-xs text-slate-400 mt-1">Max limit: KES {(savings.balance * settings.loan_multiplier).toLocaleString()}</p>
+                                <p className="text-xs text-slate-400 mt-1">Max limit: KES {(savings.balance * multiplier).toLocaleString()}</p>
                             </div>
                             <input type="number" required className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Weeks" value={loanForm.repaymentWeeks} onChange={e => setLoanForm({...loanForm, repaymentWeeks: e.target.value})} />
                             <textarea required rows="3" className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Purpose" value={loanForm.purpose} onChange={e => setLoanForm({...loanForm, purpose: e.target.value})} />
