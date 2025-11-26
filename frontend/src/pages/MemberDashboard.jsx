@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api'; 
-import { CreditCard, PiggyBank, TrendingUp, History, CheckCircle, Percent, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX, Inbox } from 'lucide-react';
+import { CreditCard, PiggyBank, TrendingUp, History, CheckCircle, Percent, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX, Inbox, Vote, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -12,6 +12,7 @@ export default function MemberDashboard({ user, onLogout }) {
   // Data State
   const [savings, setSavings] = useState({ balance: 0, history: [] });
   const [loanState, setLoanState] = useState({ status: 'LOADING', amount_repaid: 0, amount_requested: 0 });
+  const [votingQueue, setVotingQueue] = useState([]); // New: Voting Queue
   
   // Guarantor State (My Loan)
   const [guarantors, setGuarantors] = useState([]);
@@ -32,15 +33,17 @@ export default function MemberDashboard({ user, onLogout }) {
      if(!user) { navigate('/'); return; }
      const fetchData = async () => {
         try {
-            const [balanceRes, historyRes, loanRes, reqRes] = await Promise.all([
+            const [balanceRes, historyRes, loanRes, reqRes, voteRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
                 api.get('/api/loan/status'),
-                api.get('/api/loan/guarantors/requests') // Fetch incoming requests
+                api.get('/api/loan/guarantors/requests'),
+                api.get('/api/loan/vote/open') // Fetch open votes
             ]);
 
             setSavings({ balance: balanceRes.data.balance, history: historyRes.data });
-            setIncomingRequests(reqRes.data); // Set incoming requests
+            setIncomingRequests(reqRes.data);
+            setVotingQueue(voteRes.data); // Set voting queue
 
             const loan = loanRes.data;
             if (loan.status !== 'NO_APP') {
@@ -98,13 +101,22 @@ export default function MemberDashboard({ user, onLogout }) {
       try { await api.post('/api/loan/final-submit', { loanAppId: loanState.id }); setRefreshKey(o => o + 1); showNotify('success', 'Application Submitted!'); } catch(e){ showNotify('error', 'Failed'); }
   };
 
-  // New: Respond to Requests (Others' Loans)
+  // Request Response
   const handleGuarantorResponse = async (requestId, decision) => {
       try {
           await api.post('/api/loan/guarantors/respond', { requestId, decision });
           setRefreshKey(k => k + 1);
           showNotify(decision === 'ACCEPTED' ? 'success' : 'error', `Request ${decision}`);
       } catch (err) { showNotify('error', 'Action Failed'); }
+  };
+
+  // Voting Handler
+  const handleVote = async (loanId, decision) => {
+      try {
+          await api.post('/api/loan/vote', { loanId, decision });
+          setRefreshKey(k => k + 1);
+          showNotify('success', 'Vote Cast!');
+      } catch (err) { showNotify('error', err.response?.data?.error || 'Voting Failed'); }
   };
 
   const calculateProgress = () => { if (!loanState.amount_requested) return 0; return Math.min(100, (loanState.amount_repaid / loanState.amount_requested) * 100); };
@@ -130,29 +142,44 @@ export default function MemberDashboard({ user, onLogout }) {
                 </div>
             </div>
             
-            {/* Incoming Requests Panel */}
+            {/* Incoming Requests & Voting Panel */}
             <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[250px]">
                 <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider">
-                    <Inbox size={16}/> Incoming Guarantor Requests
+                    <Inbox size={16}/> Pending Actions
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                    {incomingRequests.length === 0 ? (
+                    {incomingRequests.length === 0 && votingQueue.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm">
-                            <UserCheck size={32} className="mb-2 opacity-20"/>
-                            No pending requests.
+                            <CheckCircle size={32} className="mb-2 opacity-20"/>
+                            All caught up!
                         </div>
                     ) : (
-                        incomingRequests.map(req => (
-                            <div key={req.id} className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                                <p className="text-xs text-blue-800 mb-1">
-                                    <span className="font-bold">{req.applicant_name}</span> needs a guarantor for <span className="font-bold">KES {parseInt(req.amount_requested).toLocaleString()}</span>
-                                </p>
-                                <div className="flex gap-2 mt-2">
-                                    <button onClick={() => handleGuarantorResponse(req.id, 'ACCEPTED')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-1 rounded text-xs font-bold">Accept</button>
-                                    <button onClick={() => handleGuarantorResponse(req.id, 'DECLINED')} className="flex-1 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 py-1 rounded text-xs font-bold">Decline</button>
+                        <>
+                            {incomingRequests.map(req => (
+                                <div key={`req-${req.id}`} className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                                    <p className="text-xs text-blue-800 mb-1">
+                                        <span className="font-bold">{req.applicant_name}</span> needs a guarantor for <span className="font-bold">KES {parseInt(req.amount_requested).toLocaleString()}</span>
+                                    </p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={() => handleGuarantorResponse(req.id, 'ACCEPTED')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-1 rounded text-xs font-bold">Accept</button>
+                                        <button onClick={() => handleGuarantorResponse(req.id, 'DECLINED')} className="flex-1 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 py-1 rounded text-xs font-bold">Decline</button>
+                                    </div>
                                 </div>
-                            </div>
-                        ))
+                            ))}
+                            {votingQueue.map(vote => (
+                                <div key={`vote-${vote.id}`} className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="text-xs font-bold text-purple-700">VOTE: {vote.full_name}</span>
+                                        <span className="text-xs text-purple-600 font-bold">KES {parseFloat(vote.amount_requested).toLocaleString()}</span>
+                                    </div>
+                                    <p className="text-xs text-purple-800 mb-2 italic">"{vote.purpose}"</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleVote(vote.id, 'YES')} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-1 rounded text-xs font-bold flex items-center justify-center gap-1"><ThumbsUp size={12}/> Yes</button>
+                                        <button onClick={() => handleVote(vote.id, 'NO')} className="flex-1 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 py-1 rounded text-xs font-bold flex items-center justify-center gap-1"><ThumbsDown size={12}/> No</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </>
                     )}
                 </div>
             </div>
@@ -233,7 +260,13 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {(loanState.status === 'SUBMITTED' || loanState.status === 'TABLED') && <div className="bg-white p-10 rounded-2xl shadow-sm border border-blue-100 text-center"><Clock size={40} className="mx-auto text-blue-500 mb-4 animate-pulse"/><h3 className="text-2xl font-bold">Under Review</h3><p>Application submitted to committee.</p></div>}
+                {/* Loan Status Progression */}
+                {loanState.status === 'SUBMITTED' && <div className="bg-white p-10 rounded-2xl shadow-sm border border-blue-100 text-center"><Clock size={40} className="mx-auto text-blue-500 mb-4 animate-pulse"/><h3 className="text-2xl font-bold">Under Review</h3><p>Application submitted to secretary.</p></div>}
+                {loanState.status === 'TABLED' && <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center"><Vote size={40} className="mx-auto text-purple-500 mb-4"/><h3 className="text-2xl font-bold">Tabled</h3><p>Application is tabled for the upcoming meeting.</p></div>}
+                {loanState.status === 'VOTING' && <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center"><ThumbsUp size={40} className="mx-auto text-purple-500 mb-4 animate-bounce"/><h3 className="text-2xl font-bold text-purple-900">Voting in Progress</h3><p className="text-slate-500">Members are currently voting on your application.</p></div>}
+                {loanState.status === 'APPROVED' && <div className="bg-white p-10 rounded-2xl shadow-sm border border-emerald-100 text-center"><CheckCircle size={40} className="mx-auto text-emerald-500 mb-4"/><h3 className="text-2xl font-bold text-emerald-700">Approved!</h3><p className="text-slate-500">Disbursement pending from Treasurer.</p></div>}
+                {loanState.status === 'REJECTED' && <div className="bg-white p-10 rounded-2xl shadow-sm border border-red-100 text-center"><AlertCircle size={40} className="mx-auto text-red-500 mb-4"/><h3 className="text-2xl font-bold text-red-700">Rejected</h3><p className="text-slate-500">Your loan application was not approved.</p><button onClick={handleLoanStart} className="mt-4 text-blue-600 underline">Try Again</button></div>}
+
                 {loanState.status === 'ACTIVE' && <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8"><div className="grid grid-cols-3 gap-6 mb-8 text-center"><div><p className="text-xs font-bold text-slate-500 uppercase">Principal</p><p className="text-xl font-bold">KES {loanState.amount_requested.toLocaleString()}</p></div><div><p className="text-xs font-bold text-slate-500 uppercase">Paid</p><p className="text-xl font-bold text-emerald-600">KES {loanState.amount_repaid.toLocaleString()}</p></div><div><p className="text-xs font-bold text-slate-500 uppercase">Balance</p><p className="text-xl font-bold text-red-600">KES {(loanState.amount_requested - loanState.amount_repaid).toLocaleString()}</p></div></div><div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden mb-8"><div className="bg-emerald-500 h-4 rounded-full transition-all" style={{ width: `${calculateProgress()}%` }}></div></div><button onClick={() => setActiveTab('repay')} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">Make Repayment</button></div>}
                 {loanState.status === 'COMPLETED' && <div className="bg-emerald-50 p-10 rounded-2xl text-center border border-emerald-100"><CheckCircle size={40} className="mx-auto text-emerald-500 mb-4"/><h3 className="text-2xl font-bold text-emerald-900">Loan Repaid!</h3><button onClick={handleLoanStart} className="mt-6 bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold">Apply New Loan</button></div>}
             </div>
