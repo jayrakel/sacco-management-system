@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api'; 
-import { CreditCard, PiggyBank, TrendingUp, History, CheckCircle, Percent, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX } from 'lucide-react';
+import { CreditCard, PiggyBank, TrendingUp, History, CheckCircle, Percent, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX, Inbox } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -13,10 +13,13 @@ export default function MemberDashboard({ user, onLogout }) {
   const [savings, setSavings] = useState({ balance: 0, history: [] });
   const [loanState, setLoanState] = useState({ status: 'LOADING', amount_repaid: 0, amount_requested: 0 });
   
-  // Guarantor State
+  // Guarantor State (My Loan)
   const [guarantors, setGuarantors] = useState([]);
   const [searchResults, setSearchResults] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Incoming Requests (Other people asking ME)
+  const [incomingRequests, setIncomingRequests] = useState([]);
   
   // Forms
   const [loanForm, setLoanForm] = useState({ amount: '', purpose: '', repaymentWeeks: '' });
@@ -29,13 +32,16 @@ export default function MemberDashboard({ user, onLogout }) {
      if(!user) { navigate('/'); return; }
      const fetchData = async () => {
         try {
-            const [balanceRes, historyRes, loanRes] = await Promise.all([
+            const [balanceRes, historyRes, loanRes, reqRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
-                api.get('/api/loan/status')
+                api.get('/api/loan/status'),
+                api.get('/api/loan/guarantors/requests') // Fetch incoming requests
             ]);
 
             setSavings({ balance: balanceRes.data.balance, history: historyRes.data });
+            setIncomingRequests(reqRes.data); // Set incoming requests
+
             const loan = loanRes.data;
             if (loan.status !== 'NO_APP') {
                 loan.amount_requested = parseFloat(loan.amount_requested || 0);
@@ -43,7 +49,7 @@ export default function MemberDashboard({ user, onLogout }) {
             }
             setLoanState(loan);
 
-            // Fetch guarantors if pending
+            // Fetch guarantors if pending (My Loan)
             if (loan.status === 'PENDING_GUARANTORS') {
                 const gRes = await api.get('/api/loan/guarantors');
                 setGuarantors(gRes.data);
@@ -59,22 +65,24 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleDeposit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/deposits', depositForm); showNotify('success', 'Deposit initiated!'); setDepositForm({ amount: '', phoneNumber: '' }); setRefreshKey(o=>o+1); setActiveTab('dashboard'); } catch (e) { showNotify('error', 'Failed'); } setLoading(false); };
   const handleRepayment = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/payment/repay-loan', { loanAppId: loanState.id, amount: repayForm.amount, mpesaRef: repayForm.mpesaRef || 'REF' }); showNotify('success', 'Repayment received!'); setRepayForm({ amount: '', mpesaRef: '' }); setRefreshKey(o=>o+1); setActiveTab('dashboard'); } catch (e) { showNotify('error', 'Failed'); } setLoading(false); };
   const handleLoanStart = async () => { try { await api.post('/api/loan/init'); setRefreshKey(o=>o+1); } catch(e){} };
+  
+  // Fixed Fee Payment
   const handleLoanFeePayment = async () => { 
       try { 
-          // Changed 'REF' to 'PAYMENT12345' to meet the 10-15 character requirement
           await api.post('/api/payment/pay-fee', {
               loanAppId: loanState.id, 
-              mpesaRef: 'PAYMENT' + Math.floor(10000 + Math.random() * 90000) // Generates a unique-ish valid code like PAYMENT54321
+              mpesaRef: 'PAYMENT' + Math.floor(10000 + Math.random() * 90000) 
           }); 
-          showNotify('success', 'Fee Paid Successfully!'); // Added notification for better UX
+          showNotify('success', 'Fee Paid Successfully!'); 
           setRefreshKey(o=>o+1); 
       } catch(e){
           showNotify('error', 'Payment Failed'); 
       } 
   };
+
   const handleLoanSubmit = async (e) => { e.preventDefault(); try { await api.post('/api/loan/submit', {loanAppId:loanState.id, ...loanForm}); setRefreshKey(o=>o+1); } catch(e){} };
   
-  // Guarantor Handlers
+  // Guarantor Handlers (My Loan)
   const handleSearch = async (e) => {
       const q = e.target.value; setSearchQuery(q);
       if(q.length > 2) { const res = await api.get(`/api/loan/members/search?q=${q}`); setSearchResults(res.data); } else setSearchResults([]);
@@ -90,6 +98,15 @@ export default function MemberDashboard({ user, onLogout }) {
       try { await api.post('/api/loan/final-submit', { loanAppId: loanState.id }); setRefreshKey(o => o + 1); showNotify('success', 'Application Submitted!'); } catch(e){ showNotify('error', 'Failed'); }
   };
 
+  // New: Respond to Requests (Others' Loans)
+  const handleGuarantorResponse = async (requestId, decision) => {
+      try {
+          await api.post('/api/loan/guarantors/respond', { requestId, decision });
+          setRefreshKey(k => k + 1);
+          showNotify(decision === 'ACCEPTED' ? 'success' : 'error', `Request ${decision}`);
+      } catch (err) { showNotify('error', 'Action Failed'); }
+  };
+
   const calculateProgress = () => { if (!loanState.amount_requested) return 0; return Math.min(100, (loanState.amount_repaid / loanState.amount_requested) * 100); };
 
   return (
@@ -99,6 +116,7 @@ export default function MemberDashboard({ user, onLogout }) {
       <DashboardHeader user={user} onLogout={onLogout} title="Member Portal" />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8">
+        {/* Top Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div className="md:col-span-2 bg-slate-900 rounded-2xl p-8 text-white shadow-2xl shadow-slate-200 relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-8 opacity-10"><PiggyBank size={120} /></div>
@@ -111,12 +129,31 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                 </div>
             </div>
+            
+            {/* Incoming Requests Panel */}
             <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full min-h-[250px]">
-                <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider"><History size={16}/> Recent Transactions</div>
+                <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider">
+                    <Inbox size={16}/> Incoming Guarantor Requests
+                </div>
                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                    {savings.history.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 italic text-sm">No transactions.</div> : 
-                        savings.history.map(tx => (<div key={tx.id} className="flex justify-between p-3 bg-slate-50 rounded-lg border border-slate-100"><div><p className="text-xs text-slate-400">{new Date(tx.created_at).toLocaleDateString()}</p></div><span className="font-bold text-emerald-600 text-sm">+ {parseInt(tx.amount).toLocaleString()}</span></div>))
-                    }
+                    {incomingRequests.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm">
+                            <UserCheck size={32} className="mb-2 opacity-20"/>
+                            No pending requests.
+                        </div>
+                    ) : (
+                        incomingRequests.map(req => (
+                            <div key={req.id} className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                                <p className="text-xs text-blue-800 mb-1">
+                                    <span className="font-bold">{req.applicant_name}</span> needs a guarantor for <span className="font-bold">KES {parseInt(req.amount_requested).toLocaleString()}</span>
+                                </p>
+                                <div className="flex gap-2 mt-2">
+                                    <button onClick={() => handleGuarantorResponse(req.id, 'ACCEPTED')} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-1 rounded text-xs font-bold">Accept</button>
+                                    <button onClick={() => handleGuarantorResponse(req.id, 'DECLINED')} className="flex-1 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 py-1 rounded text-xs font-bold">Decline</button>
+                                </div>
+                            </div>
+                        ))
+                    )}
                 </div>
             </div>
         </div>
@@ -143,7 +180,7 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* --- GUARANTOR UI --- */}
+                {/* --- GUARANTOR UI (My Loan) --- */}
                 {loanState.status === 'PENDING_GUARANTORS' && (
                     <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
                         <div className="mb-8 pb-6 border-b border-slate-100">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { FileText, Mic, Play, CheckSquare, Calendar } from 'lucide-react';
+import { FileText, Mic, Play, CheckSquare, Calendar, RefreshCw } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function SecretaryDashboard({ user, onLogout }) {
@@ -10,20 +10,22 @@ export default function SecretaryDashboard({ user, onLogout }) {
     const [refreshKey, setRefreshKey] = useState(0);
 
     useEffect(() => {
-        api.get('/api/loan/agenda').then(res => setApplications(res.data));
-        
-        const interval = setInterval(() => {
-             api.get('/api/loan/secretary/live-tally').then(res => setTally(res.data));
-        }, 3000); // Live poll every 3s
+        const fetchData = () => {
+            api.get('/api/loan/agenda').then(res => setApplications(res.data)).catch(err => console.error(err));
+            api.get('/api/loan/secretary/live-tally').then(res => setTally(res.data)).catch(err => console.error(err));
+        };
 
+        fetchData(); // Initial fetch
+        
+        const interval = setInterval(fetchData, 3000); // Live poll every 3s
         return () => clearInterval(interval);
     }, [refreshKey]);
 
     const tableLoan = async (loanId) => {
         try {
             await api.post('/api/loan/table', { loanId });
-            setRefreshKey(k => k + 1);
-            alert("Loan tabled! Notification sent to members.");
+            setRefreshKey(k => k + 1); // Force refresh to update UI immediately
+            alert("Loan tabled! Admin has been notified.");
         } catch (err) { alert("Error tabling loan"); }
     };
 
@@ -73,7 +75,7 @@ export default function SecretaryDashboard({ user, onLogout }) {
                         <h3 className="font-bold text-lg flex items-center gap-2 mb-4 text-slate-700">
                             <FileText className="text-blue-600"/> Incoming Applications
                         </h3>
-                        {applications.length === 0 ? <p className="text-slate-400 text-sm">No new applications.</p> : (
+                        {applications.length === 0 ? <p className="text-slate-400 text-sm flex items-center gap-2"><RefreshCw size={14} className="animate-spin"/> Waiting for new submissions...</p> : (
                             <div className="space-y-3">
                                 {applications.map(app => (
                                     <div key={app.id} className="p-4 border border-slate-100 rounded-xl bg-slate-50">
@@ -82,7 +84,10 @@ export default function SecretaryDashboard({ user, onLogout }) {
                                             <span className="text-blue-600 font-bold">KES {parseInt(app.amount_requested).toLocaleString()}</span>
                                         </div>
                                         <p className="text-xs text-slate-500 mb-3">{app.purpose}</p>
-                                        <button onClick={() => tableLoan(app.id)} className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-bold uppercase tracking-wider">Table Motion</button>
+                                        <div className="flex gap-2 text-xs text-slate-400 mb-3">
+                                            <span>{app.repayment_weeks} weeks</span>
+                                        </div>
+                                        <button onClick={() => tableLoan(app.id)} className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition">Table Motion</button>
                                     </div>
                                 ))}
                             </div>
