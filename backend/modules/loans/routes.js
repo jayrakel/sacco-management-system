@@ -4,6 +4,7 @@ const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 const { validate, loanSubmitSchema, tableLoanSchema, disburseSchema } = require('../common/validation');
 const { notifyUser, notifyAll } = require('../common/notify');
+const { getSetting } = require('../settings/routes');
 
 router.use(authenticateUser);
 
@@ -43,12 +44,21 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
         if (check.rows[0].user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
         
         const savingsRes = await db.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1 AND status = 'COMPLETED'", [req.user.id]);
-        const maxLimit = (parseFloat(savingsRes.rows[0].total || 0)) * 3;
-        if (parseInt(amount) > maxLimit) return res.status(400).json({ error: "Loan limit exceeded (Max 3x Savings)" });
+        
+        // DYNAMIC SETTING FETCH
+        const multiplierStr = await getSetting('loan_multiplier');
+        const multiplier = parseFloat(multiplierStr || 3); // Default to 3 if missing
+        
+        const maxLimit = (parseFloat(savingsRes.rows[0].total || 0)) * multiplier;
+        
+        if (parseInt(amount) > maxLimit) return res.status(400).json({ error: `Loan limit exceeded (Max ${multiplier}x Savings)` });
 
         await db.query("UPDATE loan_applications SET amount_requested=$1, purpose=$2, repayment_weeks=$3, status='PENDING_GUARANTORS' WHERE id=$4", [amount, purpose, repaymentWeeks, loanAppId]);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Error" }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Error submitting loan" }); 
+    }
 });
 
 // UPDATED: Finalize and Notify Secretary

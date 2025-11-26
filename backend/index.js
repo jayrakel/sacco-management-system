@@ -38,13 +38,15 @@ const authRoutes = require('./modules/auth/routes');
 const loanRoutes = require('./modules/loans/routes');
 const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
+const settingsModule = require('./modules/settings/routes');
 
 // --- ROUTES ---
 // FIX: Changed '/auth' to '/api/auth' to be consistent with AdminDashboard and other API routes
 app.use('/api/auth', loginLimiter, authRoutes); 
 app.use('/api/loan', apiLimiter, loanRoutes); 
 app.use('/api/payment', apiLimiter, paymentRoutes); 
-app.use('/api/deposits', apiLimiter, depositRoutes); 
+app.use('/api/deposits', apiLimiter, depositRoutes);
+app.use('/api/settings', settingsModule.router); 
 
 // --- ERROR HANDLING ---
 app.use((err, req, res, next) => {

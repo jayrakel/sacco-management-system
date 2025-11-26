@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api'; 
-import { CreditCard, PiggyBank, TrendingUp, History, CheckCircle, Percent, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX, Inbox, Vote, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus, Search, UserCheck, UserX, Inbox, Vote, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -12,7 +12,7 @@ export default function MemberDashboard({ user, onLogout }) {
   // Data State
   const [savings, setSavings] = useState({ balance: 0, history: [] });
   const [loanState, setLoanState] = useState({ status: 'LOADING', amount_repaid: 0, amount_requested: 0 });
-  const [votingQueue, setVotingQueue] = useState([]); // New: Voting Queue
+  const [votingQueue, setVotingQueue] = useState([]); 
   
   // Guarantor State (My Loan)
   const [guarantors, setGuarantors] = useState([]);
@@ -22,6 +22,9 @@ export default function MemberDashboard({ user, onLogout }) {
   // Incoming Requests (Other people asking ME)
   const [incomingRequests, setIncomingRequests] = useState([]);
   
+  // System Settings (Dynamic)
+  const [settings, setSettings] = useState({ loan_multiplier: 3 }); 
+
   // Forms
   const [loanForm, setLoanForm] = useState({ amount: '', purpose: '', repaymentWeeks: '' });
   const [depositForm, setDepositForm] = useState({ amount: '', phoneNumber: '' });
@@ -33,17 +36,24 @@ export default function MemberDashboard({ user, onLogout }) {
      if(!user) { navigate('/'); return; }
      const fetchData = async () => {
         try {
-            const [balanceRes, historyRes, loanRes, reqRes, voteRes] = await Promise.all([
+            // Added settings fetch to the Promise.all
+            const [balanceRes, historyRes, loanRes, reqRes, voteRes, settingsRes] = await Promise.all([
                 api.get('/api/deposits/balance'),
                 api.get('/api/deposits/history'),
                 api.get('/api/loan/status'),
                 api.get('/api/loan/guarantors/requests'),
-                api.get('/api/loan/vote/open') // Fetch open votes
+                api.get('/api/loan/vote/open'),
+                api.get('/api/settings') // Fetch settings
             ]);
 
             setSavings({ balance: balanceRes.data.balance, history: historyRes.data });
             setIncomingRequests(reqRes.data);
-            setVotingQueue(voteRes.data); // Set voting queue
+            setVotingQueue(voteRes.data);
+            
+            // Update settings state
+            if (settingsRes.data) {
+                setSettings(settingsRes.data);
+            }
 
             const loan = loanRes.data;
             if (loan.status !== 'NO_APP') {
@@ -52,7 +62,6 @@ export default function MemberDashboard({ user, onLogout }) {
             }
             setLoanState(loan);
 
-            // Fetch guarantors if pending (My Loan)
             if (loan.status === 'PENDING_GUARANTORS') {
                 const gRes = await api.get('/api/loan/guarantors');
                 setGuarantors(gRes.data);
@@ -69,7 +78,6 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleRepayment = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/payment/repay-loan', { loanAppId: loanState.id, amount: repayForm.amount, mpesaRef: repayForm.mpesaRef || 'REF' }); showNotify('success', 'Repayment received!'); setRepayForm({ amount: '', mpesaRef: '' }); setRefreshKey(o=>o+1); setActiveTab('dashboard'); } catch (e) { showNotify('error', 'Failed'); } setLoading(false); };
   const handleLoanStart = async () => { try { await api.post('/api/loan/init'); setRefreshKey(o=>o+1); } catch(e){} };
   
-  // Fixed Fee Payment
   const handleLoanFeePayment = async () => { 
       try { 
           await api.post('/api/payment/pay-fee', {
@@ -83,13 +91,28 @@ export default function MemberDashboard({ user, onLogout }) {
       } 
   };
 
-  const handleLoanSubmit = async (e) => { e.preventDefault(); try { await api.post('/api/loan/submit', {loanAppId:loanState.id, ...loanForm}); setRefreshKey(o=>o+1); } catch(e){} };
+  const handleLoanSubmit = async (e) => { 
+      e.preventDefault(); 
+      // Client-side validation using dynamic setting
+      const maxLoan = savings.balance * settings.loan_multiplier;
+      if (parseInt(loanForm.amount) > maxLoan) {
+          showNotify('error', `Limit exceeded! Max: ${maxLoan.toLocaleString()}`);
+          return;
+      }
+
+      try { 
+          await api.post('/api/loan/submit', {loanAppId:loanState.id, ...loanForm}); 
+          setRefreshKey(o=>o+1); 
+      } catch(e){
+          showNotify('error', e.response?.data?.error || 'Submission failed');
+      } 
+  };
   
-  // Guarantor Handlers (My Loan)
   const handleSearch = async (e) => {
       const q = e.target.value; setSearchQuery(q);
       if(q.length > 2) { const res = await api.get(`/api/loan/members/search?q=${q}`); setSearchResults(res.data); } else setSearchResults([]);
   };
+  
   const addGuarantor = async (guarantorId) => {
       try {
           await api.post('/api/loan/guarantors/add', { loanId: loanState.id, guarantorId });
@@ -97,11 +120,11 @@ export default function MemberDashboard({ user, onLogout }) {
           showNotify('success', 'Request Sent!');
       } catch (err) { showNotify('error', err.response?.data?.error || "Failed"); }
   };
+  
   const handleFinalSubmit = async () => {
       try { await api.post('/api/loan/final-submit', { loanAppId: loanState.id }); setRefreshKey(o => o + 1); showNotify('success', 'Application Submitted!'); } catch(e){ showNotify('error', 'Failed'); }
   };
 
-  // Request Response
   const handleGuarantorResponse = async (requestId, decision) => {
       try {
           await api.post('/api/loan/guarantors/respond', { requestId, decision });
@@ -110,7 +133,6 @@ export default function MemberDashboard({ user, onLogout }) {
       } catch (err) { showNotify('error', 'Action Failed'); }
   };
 
-  // Voting Handler
   const handleVote = async (loanId, decision) => {
       try {
           await api.post('/api/loan/vote', { loanId, decision });
@@ -192,14 +214,28 @@ export default function MemberDashboard({ user, onLogout }) {
             <div className="space-y-6">
                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><CreditCard className="text-blue-500"/> Loan Application Status</h3>
                 {loanState.status === 'LOADING' && <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-100 border-dashed">Loading...</div>}
-                {loanState.status === 'NO_APP' && <div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6"><div><h4 className="text-2xl font-bold">Apply for Loan</h4><p>Get up to 3x savings.</p></div><button onClick={handleLoanStart} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold">Start Application</button></div>}
+                
+                {/* DYNAMIC SETTING USED HERE */}
+                {loanState.status === 'NO_APP' && (
+                    <div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
+                        <div>
+                            <h4 className="text-2xl font-bold">Apply for Loan</h4>
+                            <p>Get up to <span className="font-bold text-yellow-300">{settings.loan_multiplier}x</span> savings.</p>
+                        </div>
+                        <button onClick={handleLoanStart} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold">Start Application</button>
+                    </div>
+                )}
+
                 {loanState.status === 'FEE_PENDING' && <div className="bg-white rounded-2xl shadow-sm border-l-4 border-amber-500 p-8 flex items-center justify-between"><div><h4 className="text-lg font-bold">Fee Required</h4><p className="text-slate-500">Pay KES 500 to proceed.</p></div><button onClick={handleLoanFeePayment} disabled={loading} className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold text-sm">Pay Fee</button></div>}
                 
                 {loanState.status === 'FEE_PAID' && (
                     <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
                         <h4 className="text-lg font-bold text-slate-800 mb-6">Loan Details</h4>
                         <form onSubmit={handleLoanSubmit} className="space-y-4 max-w-xl">
-                            <input type="number" required className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Amount" value={loanForm.amount} onChange={e => setLoanForm({...loanForm, amount: e.target.value})} />
+                            <div>
+                                <input type="number" required className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Amount" value={loanForm.amount} onChange={e => setLoanForm({...loanForm, amount: e.target.value})} />
+                                <p className="text-xs text-slate-400 mt-1">Max limit: KES {(savings.balance * settings.loan_multiplier).toLocaleString()}</p>
+                            </div>
                             <input type="number" required className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Weeks" value={loanForm.repaymentWeeks} onChange={e => setLoanForm({...loanForm, repaymentWeeks: e.target.value})} />
                             <textarea required rows="3" className="w-full border p-3 rounded-xl bg-slate-50" placeholder="Purpose" value={loanForm.purpose} onChange={e => setLoanForm({...loanForm, purpose: e.target.value})} />
                             <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold">Next: Add Guarantors</button>

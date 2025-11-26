@@ -3,18 +3,19 @@ import api from '../api';
 import { 
     Users, Gavel, CheckCircle, UserPlus, Search, 
     Shield, Mail, Phone, Calendar, FileText, 
-    DollarSign, TrendingUp, Briefcase 
+    DollarSign, TrendingUp, Briefcase, Settings, Save 
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function AdminDashboard({ user, onLogout }) {
-    // Tabs: 'voting' | 'users' | 'finance' | 'register'
+    // Tabs: 'voting' | 'users' | 'finance' | 'settings' | 'register'
     const [activeTab, setActiveTab] = useState('voting');
     
     // Data States
     const [agenda, setAgenda] = useState([]);
     const [users, setUsers] = useState([]);
     const [deposits, setDeposits] = useState([]);
+    const [settings, setSettings] = useState([]); 
     const [searchTerm, setSearchTerm] = useState('');
     
     // Register Form Data
@@ -34,9 +35,11 @@ export default function AdminDashboard({ user, onLogout }) {
                     const res = await api.get('/api/auth/users');
                     setUsers(res.data);
                 } else if (activeTab === 'finance') {
-                    // Fetch all deposits
                     const res = await api.get('/api/deposits/admin/all');
                     setDeposits(res.data);
+                } else if (activeTab === 'settings') {
+                    const res = await api.get('/api/settings');
+                    setSettings(res.data);
                 }
             } catch (err) {
                 console.error("Failed to fetch data", err);
@@ -48,12 +51,14 @@ export default function AdminDashboard({ user, onLogout }) {
     // --- ACTIONS ---
 
     const openVoting = async (loanId) => {
-        if (!window.confirm("Open voting for this loan?")) return;
+        if (!window.confirm("Are you sure you want to open voting for this loan?")) return;
         try {
             await api.post('/api/loan/admin/open-voting', { loanId });
             setRefreshKey(k => k + 1);
-            alert("Voting opened!");
-        } catch (err) { alert("Action failed"); }
+            alert("Voting session opened successfully!");
+        } catch (err) {
+            alert("Error opening voting session");
+        }
     };
 
     const handleRegister = async (e) => {
@@ -61,10 +66,23 @@ export default function AdminDashboard({ user, onLogout }) {
         setLoading(true);
         try {
             await api.post('/api/auth/register', regForm);
-            alert("Member registered!");
+            alert("Member registered successfully!");
             setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
-        } catch (err) { alert(err.response?.data?.error || "Failed"); }
+        } catch (err) {
+            alert(err.response?.data?.error || "Registration failed");
+        }
         setLoading(false);
+    };
+
+    const handleSettingUpdate = async (key, newValue) => {
+        try {
+            await api.post('/api/settings/update', { key, value: newValue });
+            // Optimistic UI update
+            setSettings(prev => prev.map(s => s.setting_key === key ? { ...s, setting_value: newValue } : s));
+            alert("Setting updated successfully!");
+        } catch (err) {
+            alert("Failed to update setting");
+        }
     };
 
     // --- UI HELPERS ---
@@ -85,7 +103,6 @@ export default function AdminDashboard({ user, onLogout }) {
         </button>
     );
 
-    // Calculate Total Savings
     const totalSavings = deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
 
     return (
@@ -102,10 +119,11 @@ export default function AdminDashboard({ user, onLogout }) {
                             </h1>
                             <p className="text-indigo-300 text-sm mt-1">System Overview and Management</p>
                         </div>
-                        <div className="flex bg-indigo-950/50 p-1.5 rounded-xl overflow-x-auto max-w-full border border-indigo-800/50">
+                        <div className="flex bg-indigo-950/50 p-1.5 rounded-xl overflow-x-auto max-w-full border border-indigo-800/50 scrollbar-hide">
                             {renderTabButton('voting', 'Voting', <Gavel size={16}/>)}
                             {renderTabButton('users', 'Members', <Users size={16}/>)}
                             {renderTabButton('finance', 'Finances', <TrendingUp size={16}/>)}
+                            {renderTabButton('settings', 'Configuration', <Settings size={16}/>)}
                             {renderTabButton('register', 'New User', <UserPlus size={16}/>)}
                         </div>
                     </div>
@@ -119,15 +137,16 @@ export default function AdminDashboard({ user, onLogout }) {
                         </h2>
                         {agenda.length === 0 ? (
                             <div className="p-12 text-center text-slate-400 border-2 border-dashed border-slate-100 rounded-xl">
+                                <Gavel size={48} className="mx-auto mb-4 opacity-20"/>
                                 <p>No tabled loans available for voting.</p>
                             </div>
                         ) : (
                             <div className="grid gap-4">
                                 {agenda.map(item => (
-                                    <div key={item.id} className="flex flex-col sm:flex-row items-center justify-between p-5 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div key={item.id} className="flex flex-col sm:flex-row items-center justify-between p-5 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-100 transition">
                                         <div>
                                             <p className="font-bold text-slate-800 text-lg">{item.full_name}</p>
-                                            <p className="text-sm text-slate-500">Requesting: KES {parseFloat(item.amount_requested).toLocaleString()}</p>
+                                            <p className="text-sm text-slate-500">Requesting: <span className="font-bold text-slate-800">KES {parseFloat(item.amount_requested).toLocaleString()}</span></p>
                                             <p className="text-xs text-slate-400 italic mt-1">"{item.purpose}"</p>
                                         </div>
                                         <button onClick={() => openVoting(item.id)}
@@ -174,7 +193,7 @@ export default function AdminDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. FINANCIALS TAB (DEPOSITS) */}
+                {/* 3. FINANCIALS TAB */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Summary Card */}
@@ -221,7 +240,55 @@ export default function AdminDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 4. REGISTER TAB */}
+                {/* 4. SETTINGS TAB (NEW) */}
+                {activeTab === 'settings' && (
+                    <div className="max-w-4xl mx-auto animate-fade-in">
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                    <Settings className="text-slate-600" /> System Configuration
+                                </h2>
+                                <p className="text-slate-500 text-sm mt-1">Adjust core system parameters. Changes apply immediately.</p>
+                            </div>
+                            
+                            <div className="divide-y divide-slate-100">
+                                {settings.map((setting) => (
+                                    <div key={setting.setting_key} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition">
+                                        <div className="flex-1">
+                                            <h3 className="font-bold text-slate-800 capitalize text-lg">
+                                                {setting.setting_key.replace(/_/g, ' ')}
+                                            </h3>
+                                            <p className="text-slate-500 text-sm mt-1">{setting.description}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <input 
+                                                type="text" 
+                                                defaultValue={setting.setting_value}
+                                                id={`input-${setting.setting_key}`}
+                                                className="border border-slate-300 rounded-lg px-4 py-2 w-32 text-right font-mono text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                            />
+                                            <button 
+                                                onClick={() => {
+                                                    const val = document.getElementById(`input-${setting.setting_key}`).value;
+                                                    handleSettingUpdate(setting.setting_key, val);
+                                                }}
+                                                className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-lg shadow-sm transition"
+                                                title="Save Change"
+                                            >
+                                                <Save size={20} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {settings.length === 0 && (
+                                <div className="p-12 text-center text-slate-400 italic">Loading settings...</div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* 5. REGISTER TAB */}
                 {activeTab === 'register' && (
                     <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in">
                         <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2">
