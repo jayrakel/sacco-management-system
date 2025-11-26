@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-const { authenticateUser } = require('../auth/middleware');
+const { authenticateUser, requireRole } = require('../auth/middleware');
 const { validate, paymentSchema, repaymentSchema } = require('../common/validation');
 
 // 1. PAY APPLICATION FEE
@@ -103,6 +103,22 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         res.status(500).json({ error: "Repayment Failed" });
     } finally {
         client.release();
+    }
+});
+
+// GET ALL TRANSACTIONS (Admin)
+router.get('/admin/all', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT t.*, u.full_name 
+             FROM transactions t 
+             JOIN users u ON t.user_id = u.id 
+             ORDER BY t.created_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Could not fetch transactions" });
     }
 });
 

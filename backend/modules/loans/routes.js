@@ -330,4 +330,20 @@ router.put('/notifications/:id/read', async (req, res) => {
     catch (err) { res.status(500).json({ error: "Update failed" }); }
 });
 
+// GET ALL LOANS (Admin Registry)
+router.get('/admin/all', requireRole('ADMIN'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT l.*, u.full_name 
+             FROM loan_applications l 
+             JOIN users u ON l.user_id = u.id 
+             ORDER BY l.created_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Fetch error" }); 
+    }
+});
+
 module.exports = router;

@@ -74,4 +74,17 @@ router.post('/logout', (req, res) => {
     res.json({ message: "Logged out successfully" });
 });
 
+// GET ALL USERS (Admin Only)
+router.get('/users', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+    try {
+        const result = await db.query(
+            "SELECT id, full_name, email, role, phone_number, created_at FROM users ORDER BY created_at DESC"
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch users" });
+    }
+});
+
 module.exports = router;
