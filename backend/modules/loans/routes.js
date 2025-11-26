@@ -222,7 +222,7 @@ router.post('/table', requireRole('SECRETARY'), validate(tableLoanSchema), async
         const loan = loanQuery.rows[0];
         await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [loanId]);
         await notifyAll((recipient) => {
-            return `📢 MEETING NOTICE\n\nDear ${recipient.full_name},\n\nA loan application number ${loan.id} has been submitted by ${loan.applicant_name} for review by the committee. It is now pending review and shall be reviewed in our next scheduled meeting.\n\nThank you,\nSecretary`;
+            return `📢 MEETING NOTICE\n\nDear ${recipient.full_name},\n\nA loan application has been submitted by ${loan.applicant_name} for review by the committee. It is now pending review and shall be reviewed in our next scheduled meeting.\n\nThank you,\nSecretary`;
         });
         res.json({ success: true, message: "Loan tabled and members notified." });
     } catch (err) { res.status(500).json({ error: "Failed to table loan" }); }

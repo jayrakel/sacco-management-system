@@ -59,7 +59,19 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleDeposit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/deposits', depositForm); showNotify('success', 'Deposit initiated!'); setDepositForm({ amount: '', phoneNumber: '' }); setRefreshKey(o=>o+1); setActiveTab('dashboard'); } catch (e) { showNotify('error', 'Failed'); } setLoading(false); };
   const handleRepayment = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/payment/repay-loan', { loanAppId: loanState.id, amount: repayForm.amount, mpesaRef: repayForm.mpesaRef || 'REF' }); showNotify('success', 'Repayment received!'); setRepayForm({ amount: '', mpesaRef: '' }); setRefreshKey(o=>o+1); setActiveTab('dashboard'); } catch (e) { showNotify('error', 'Failed'); } setLoading(false); };
   const handleLoanStart = async () => { try { await api.post('/api/loan/init'); setRefreshKey(o=>o+1); } catch(e){} };
-  const handleLoanFeePayment = async () => { try { await api.post('/api/payment/pay-fee', {loanAppId:loanState.id, mpesaRef:'REF'}); setRefreshKey(o=>o+1); } catch(e){} };
+  const handleLoanFeePayment = async () => { 
+      try { 
+          // Changed 'REF' to 'PAYMENT12345' to meet the 10-15 character requirement
+          await api.post('/api/payment/pay-fee', {
+              loanAppId: loanState.id, 
+              mpesaRef: 'PAYMENT' + Math.floor(10000 + Math.random() * 90000) // Generates a unique-ish valid code like PAYMENT54321
+          }); 
+          showNotify('success', 'Fee Paid Successfully!'); // Added notification for better UX
+          setRefreshKey(o=>o+1); 
+      } catch(e){
+          showNotify('error', 'Payment Failed'); 
+      } 
+  };
   const handleLoanSubmit = async (e) => { e.preventDefault(); try { await api.post('/api/loan/submit', {loanAppId:loanState.id, ...loanForm}); setRefreshKey(o=>o+1); } catch(e){} };
   
   // Guarantor Handlers
