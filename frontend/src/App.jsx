@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import MemberDashboard from './pages/MemberDashboard';
 import SecretaryDashboard from './pages/SecretaryDashboard';
 import AdminDashboard from './pages/AdminDashboard';
-import TreasurerDashboard from './pages/TreasurerDashboard'; // IMPORT THIS
+import TreasurerDashboard from './pages/TreasurerDashboard';
+
+// SECURITY SETTING: Time in milliseconds before auto-logout
+// 5 minutes * 60 seconds * 1000 milliseconds
+const INACTIVITY_LIMIT = 5 * 60 * 1000; 
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -12,11 +16,14 @@ export default function App() {
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
-  const handleLogout = () => {
+  // 1. Define Logout Function (memoized with useCallback)
+  const handleLogout = useCallback(() => {
+    console.log("Logging out...");
     setUser(null);
     localStorage.removeItem('user');
     localStorage.removeItem('token');
-  };
+    // Optional: Call backend logout route here if you implement server-side session destruction
+  }, []);
 
   const getRedirectPath = (role) => {
     if (role === 'ADMIN') return '/admin';
@@ -24,6 +31,40 @@ export default function App() {
     if (role === 'TREASURER') return '/treasurer';
     return '/member';
   };
+
+  // 2. NEW: Inactivity Monitor
+  useEffect(() => {
+    // Only activate listener if a user is logged in
+    if (!user) return;
+
+    let timeoutId;
+
+    const resetTimer = () => {
+      // Clear the existing timer
+      if (timeoutId) clearTimeout(timeoutId);
+      
+      // Set a new timer
+      timeoutId = setTimeout(() => {
+        alert("For your security, you have been logged out due to inactivity.");
+        handleLogout();
+      }, INACTIVITY_LIMIT);
+    };
+
+    // Events that define "activity"
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+
+    // Attach listeners
+    events.forEach(event => window.addEventListener(event, resetTimer));
+
+    // Start the timer immediately upon login/load
+    resetTimer();
+
+    // Cleanup function (runs when component unmounts or user logs out)
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, [user, handleLogout]); // Dependencies ensure this runs when user state changes
 
   return (
     <Router>
@@ -43,7 +84,6 @@ export default function App() {
           element={user && user.role === 'SECRETARY' ? <SecretaryDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
         />
 
-        {/* NEW TREASURER ROUTE */}
         <Route 
           path="/treasurer" 
           element={user && user.role === 'TREASURER' ? <TreasurerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 

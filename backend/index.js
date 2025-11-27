@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 // 1. Security Middleware
 app.use(helmet()); 
 app.use(cors({ 
-    origin: 'http://localhost:5173', // Ensure this matches your Frontend URL
+    origin: 'http://localhost:5173', 
     credentials: true 
 }));
 app.use(express.json());
@@ -35,16 +35,21 @@ const apiLimiter = rateLimit({
 
 // --- MODULES ---
 const authRoutes = require('./modules/auth/routes');
-const loanRoutes = require('./modules/loans/routes');
+// Load the new modularized loan routes (looks for index.js in the folder)
+const loanRoutes = require('./modules/loans'); 
 const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
 const settingsModule = require('./modules/settings/routes');
 
 // --- ROUTES ---
-// FIX: Changed '/auth' to '/api/auth' to be consistent with AdminDashboard and other API routes
 app.use('/api/auth', loginLimiter, authRoutes); 
 app.use('/api/loan', apiLimiter, loanRoutes); 
-app.use('/api/payment', apiLimiter, paymentRoutes); 
+
+// ---------------------------------------------------------
+// FIX IS HERE: Changed '/api/payment' to '/api/payments'
+// ---------------------------------------------------------
+app.use('/api/payments', apiLimiter, paymentRoutes); 
+
 app.use('/api/deposits', apiLimiter, depositRoutes);
 app.use('/api/settings', settingsModule.router); 
 
@@ -57,30 +62,21 @@ app.use((err, req, res, next) => {
 // --- INITIALIZATION LOGIC ---
 const initializeSystem = async () => {
     try {
-        // Test DB connection
         await db.query('SELECT NOW()');
         console.log("✅ Database Connected");
 
         const result = await db.query("SELECT COUNT(*) FROM users");
-        const userCount = parseInt(result.rows[0].count);
-
-        if (userCount === 0) {
+        if (parseInt(result.rows[0].count) === 0) {
             console.log("⚠️ No users found. Initializing System...");
-            
             const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
-            
-            if (!adminPassword) {
-                console.error("❌ ERROR: Set INITIAL_ADMIN_PASSWORD in .env to create default admin.");
-            } else {
-                const salt = await bcrypt.genSalt(10);
-                const hash = await bcrypt.hash(adminPassword, salt);
-
+            if (adminPassword) {
+                const hash = await bcrypt.hash(adminPassword, 10);
                 await db.query(
                     `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
                      VALUES ($1, $2, $3, $4, $5)`,
                     ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000']
                 );
-                console.log("✅ DEFAULT ADMIN CREATED: admin@sacco.com");
+                console.log("✅ DEFAULT ADMIN CREATED");
             }
         }
     } catch (err) {
@@ -92,3 +88,5 @@ app.listen(PORT, async () => {
     await initializeSystem();
     console.log(`🚀 Server running securely on port ${PORT}`);
 });
+
+module.exports = app;
