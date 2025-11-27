@@ -7,6 +7,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import MemberDashboard from './pages/MemberDashboard';
 import SecretaryDashboard from './pages/SecretaryDashboard';
 import TreasurerDashboard from './pages/TreasurerDashboard';
+import LoanOfficerDashboard from './pages/LoanOfficerDashboard';
 import api from './api';
 
 const INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 Minutes
@@ -80,6 +81,7 @@ export default function App() {
     if (role === 'ADMIN') return '/admin';
     if (role === 'SECRETARY') return '/secretary';
     if (role === 'TREASURER') return '/treasurer';
+    if (role === 'LOAN_OFFICER') return '/loan-officer';
     return '/member';
   };
 
@@ -121,7 +123,15 @@ export default function App() {
         <Route path="/member" element={user && user.role === 'MEMBER' ? <MemberDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
         <Route path="/secretary" element={user && user.role === 'SECRETARY' ? <SecretaryDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
         <Route path="/treasurer" element={user && user.role === 'TREASURER' ? <TreasurerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
-        
+        {/* Loan Officer Dashboard */}
+        <Route 
+          path="/loan-officer" 
+          element={
+            user && user.role === 'LOAN_OFFICER' 
+            ? <LoanOfficerDashboard user={user} onLogout={handleLogout} /> 
+            : <Navigate to="/" />
+          } 
+        />
         {/* Admin Dashboard: Protected by setup completion */}
         <Route 
           path="/admin" 

@@ -10,6 +10,7 @@ const adminRoutes = require('./admin.routes');
 const secretaryRoutes = require('./secretary.routes');
 const treasuryRoutes = require('./treasury.routes');
 const notifRoutes = require('./notification.routes');
+const officerRoutes = require('./officer.routes');
 
 // Apply authentication middleware globally to ALL loan routes
 router.use(authenticateUser);
@@ -23,5 +24,6 @@ router.use('/', adminRoutes);
 router.use('/', secretaryRoutes);
 router.use('/', treasuryRoutes);
 router.use('/', notifRoutes);
+router.use('/', officerRoutes);
 
 module.exports = router;
