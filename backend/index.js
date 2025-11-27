@@ -69,14 +69,19 @@ const initializeSystem = async () => {
         if (parseInt(result.rows[0].count) === 0) {
             console.log("⚠️ No users found. Initializing System...");
             const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
+            
             if (adminPassword) {
                 const hash = await bcrypt.hash(adminPassword, 10);
+                
+                // FIX: Added 'must_change_password' = TRUE
                 await db.query(
-                    `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
-                     VALUES ($1, $2, $3, $4, $5)`,
-                    ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000']
+                    `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password) 
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000', true]
                 );
-                console.log("✅ DEFAULT ADMIN CREATED");
+                console.log("✅ DEFAULT ADMIN CREATED (Password Change Required)");
+            } else {
+                console.log("❌ INITIAL_ADMIN_PASSWORD missing in .env");
             }
         }
     } catch (err) {

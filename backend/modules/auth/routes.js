@@ -30,7 +30,7 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
     }
 })
 
-// LOGIN (Public)
+// LOGIN (Updated)
 router.post('/login', validate(loginSchema), async (req, res) => {
     const { email, password } = req.body;
 
@@ -48,23 +48,55 @@ router.post('/login', validate(loginSchema), async (req, res) => {
             { expiresIn: '1h' }
         );
 
-        // SECURITY FIX: Send token as HTTP-Only Cookie
         res.cookie('token', token, {
-            httpOnly: true, // JavaScript cannot access this (Blocks XSS)
-            secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
-            sameSite: 'strict', // Protects against CSRF
-            maxAge: 3600000 // 1 hour
+            httpOnly: true, 
+            secure: process.env.NODE_ENV === 'production', 
+            sameSite: 'strict', 
+            maxAge: 3600000 
         });
 
         res.json({ 
             success: true,
-            // Token is no longer in the body!
-            user: { id: user.id, name: user.full_name, role: user.role, email: user.email }
+            user: { 
+                id: user.id, 
+                name: user.full_name, 
+                role: user.role, 
+                email: user.email,
+                // Pass this flag to frontend
+                mustChangePassword: user.must_change_password 
+            }
         });
 
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Login failed" });
+    }
+});
+
+// NEW: FORCE PASSWORD CHANGE ROUTE
+router.post('/change-password', authenticateUser, async (req, res) => {
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters long." });
+    }
+
+    try {
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(newPassword, salt);
+
+        await db.query(
+            `UPDATE users 
+             SET password_hash = $1, must_change_password = FALSE 
+             WHERE id = $2`,
+            [hash, req.user.id]
+        );
+
+        res.json({ success: true, message: "Password updated successfully." });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update password." });
     }
 });
 
