@@ -2,27 +2,22 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
     Users, Gavel, CheckCircle, UserPlus, Search, 
-    Shield, Mail, Phone, Calendar, FileText, 
-    DollarSign, TrendingUp, Briefcase, Settings, Save 
+    Shield, FileText, 
+    DollarSign, TrendingUp, Settings, Save, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function AdminDashboard({ user, onLogout }) {
-    // Tabs: 'voting' | 'users' | 'finance' | 'settings' | 'register'
     const [activeTab, setActiveTab] = useState('voting');
     
-    // Data States
     const [agenda, setAgenda] = useState([]);
     const [users, setUsers] = useState([]);
     const [deposits, setDeposits] = useState([]);
     const [settings, setSettings] = useState([]); 
     const [searchTerm, setSearchTerm] = useState('');
     
-    // Register Form Data
     const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
     const [loading, setLoading] = useState(false);
-    
-    // Refresh trigger
     const [refreshKey, setRefreshKey] = useState(0);
 
     useEffect(() => {
@@ -49,7 +44,6 @@ export default function AdminDashboard({ user, onLogout }) {
     }, [activeTab, refreshKey]);
 
     // --- ACTIONS ---
-
     const openVoting = async (loanId) => {
         if (!window.confirm("Are you sure you want to open voting for this loan?")) return;
         try {
@@ -76,21 +70,20 @@ export default function AdminDashboard({ user, onLogout }) {
 
     const handleSettingUpdate = async (key, newValue) => {
         try {
-            await api.post('/api/settings/update', { key, value: newValue });
-            // Optimistic UI update
-            setSettings(prev => prev.map(s => s.setting_key === key ? { ...s, setting_value: newValue } : s));
-            alert("Setting updated successfully!");
+            await api.post('/api/settings/update', { key, value: String(newValue) });
+            setSettings(prev => prev.map(s => s.setting_key === key ? { ...s, setting_value: String(newValue) } : s));
+            alert("Setting saved!");
         } catch (err) {
             alert("Failed to update setting");
         }
     };
 
-    // --- UI HELPERS ---
+    const getSettingValue = (key) => {
+        const s = settings.find(x => x.setting_key === key);
+        return s ? s.setting_value : '';
+    };
 
-    const filteredUsers = users.filter(u => 
-        u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        u.email.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // --- RENDERERS ---
 
     const renderTabButton = (id, label, icon) => (
         <button 
@@ -110,7 +103,6 @@ export default function AdminDashboard({ user, onLogout }) {
             <DashboardHeader user={user} onLogout={onLogout} title="Admin & Chairperson Panel" />
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
-                {/* Page Header */}
                 <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div>
@@ -196,7 +188,6 @@ export default function AdminDashboard({ user, onLogout }) {
                 {/* 3. FINANCIALS TAB */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
-                        {/* Summary Card */}
                         <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-lg flex items-center justify-between">
                             <div>
                                 <p className="text-emerald-100 font-bold text-sm uppercase">Total Sacco Assets (Deposits)</p>
@@ -207,7 +198,6 @@ export default function AdminDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
-                        {/* Detailed List */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                             <div className="p-5 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
                                 <FileText className="text-slate-500"/> <h3 className="font-bold text-slate-800">Deposit History Log</h3>
@@ -240,50 +230,68 @@ export default function AdminDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 4. SETTINGS TAB (NEW) */}
+                {/* 4. CONFIGURATION TAB */}
                 {activeTab === 'settings' && (
-                    <div className="max-w-4xl mx-auto animate-fade-in">
+                    <div className="max-w-4xl mx-auto animate-fade-in space-y-6">
+                        
+                        {/* Grace Period Section */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
+                            <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-800">Grace Period Settings</h3>
+                                    <p className="text-slate-500 text-sm">Control if and how long new loans have a grace period.</p>
+                                </div>
+                                <button 
+                                    onClick={() => handleSettingUpdate('grace_period_enabled', getSettingValue('grace_period_enabled') === 'true' ? 'false' : 'true')}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition ${getSettingValue('grace_period_enabled') === 'true' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
+                                >
+                                    {getSettingValue('grace_period_enabled') === 'true' ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                    {getSettingValue('grace_period_enabled') === 'true' ? 'ENABLED' : 'DISABLED'}
+                                </button>
+                            </div>
+
+                            {getSettingValue('grace_period_enabled') === 'true' && (
+                                <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-xl">
+                                    <span className="text-sm font-medium text-slate-600">Duration (Weeks):</span>
+                                    <input 
+                                        type="number" 
+                                        className="border border-slate-300 rounded-lg px-3 py-1.5 w-24 text-center font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                                        defaultValue={getSettingValue('default_grace_period_weeks')}
+                                        onBlur={(e) => handleSettingUpdate('default_grace_period_weeks', e.target.value)}
+                                    />
+                                    <span className="text-xs text-slate-400 italic">Changes apply to new disbursements only.</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* General Settings List */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                             <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    <Settings className="text-slate-600" /> System Configuration
+                                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Settings className="text-slate-600" /> General Parameters
                                 </h2>
-                                <p className="text-slate-500 text-sm mt-1">Adjust core system parameters. Changes apply immediately.</p>
                             </div>
                             
                             <div className="divide-y divide-slate-100">
-                                {settings.map((setting) => (
+                                {settings.filter(s => !['grace_period_enabled', 'default_grace_period_weeks'].includes(s.setting_key)).map((setting) => (
                                     <div key={setting.setting_key} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition">
                                         <div className="flex-1">
-                                            <h3 className="font-bold text-slate-800 capitalize text-lg">
+                                            <h3 className="font-bold text-slate-800 capitalize text-sm">
                                                 {setting.setting_key.replace(/_/g, ' ')}
                                             </h3>
-                                            <p className="text-slate-500 text-sm mt-1">{setting.description}</p>
+                                            <p className="text-slate-500 text-xs mt-1">{setting.description}</p>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <input 
                                                 type="text" 
                                                 defaultValue={setting.setting_value}
-                                                id={`input-${setting.setting_key}`}
+                                                onBlur={(e) => handleSettingUpdate(setting.setting_key, e.target.value)}
                                                 className="border border-slate-300 rounded-lg px-4 py-2 w-32 text-right font-mono text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none"
                                             />
-                                            <button 
-                                                onClick={() => {
-                                                    const val = document.getElementById(`input-${setting.setting_key}`).value;
-                                                    handleSettingUpdate(setting.setting_key, val);
-                                                }}
-                                                className="bg-indigo-600 hover:bg-indigo-700 text-white p-2 rounded-lg shadow-sm transition"
-                                                title="Save Change"
-                                            >
-                                                <Save size={20} />
-                                            </button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            {settings.length === 0 && (
-                                <div className="p-12 text-center text-slate-400 italic">Loading settings...</div>
-                            )}
                         </div>
                     </div>
                 )}
