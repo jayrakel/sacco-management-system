@@ -64,7 +64,8 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
              SET status='ACTIVE', 
                  interest_amount=$1, 
                  total_due=$2, 
-                 updated_at=NOW() 
+                 updated_at=NOW(), 
+                 disbursed_at=NOW() -- NEW: Start the clock
              WHERE id=$3`, 
             [interest, totalDue, loanId]
         );

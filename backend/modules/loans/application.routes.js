@@ -5,26 +5,84 @@ const { validate, loanSubmitSchema } = require('../common/validation');
 const { getSetting } = require('../settings/routes');
 const { notifyUser, notifyAll } = require('../common/notify'); // Added notifyAll import
 
-// GET MY LOAN STATUS
+// GET MY LOAN STATUS (With Weekly Schedule Logic)
 router.get('/status', async (req, res) => {
     try {
-        // Added total_due and interest_amount to query
+        // 1. Fetch Loan Data
         const result = await db.query(
-            `SELECT id, status, fee_amount, amount_requested, amount_repaid, purpose, repayment_weeks, total_due, interest_amount 
-             FROM loan_applications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+            `SELECT id, status, fee_amount, amount_requested, amount_repaid, 
+                    purpose, repayment_weeks, total_due, interest_amount, disbursed_at 
+             FROM loan_applications 
+             WHERE user_id = $1 
+             ORDER BY created_at DESC LIMIT 1`,
             [req.user.id]
         );
+
         if (result.rows.length === 0) return res.json({ status: 'NO_APP' });
         
         const loan = result.rows[0];
-        // Standardize numbers
+
+        // 2. Parse Numbers
         loan.amount_requested = parseFloat(loan.amount_requested || 0);
         loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
         loan.total_due = parseFloat(loan.total_due || 0);
         loan.interest_amount = parseFloat(loan.interest_amount || 0);
-        
+        loan.repayment_weeks = parseInt(loan.repayment_weeks || 0);
+
+        // 3. Calculate Weekly Schedule (If Active)
+        loan.schedule = {
+            weekly_installment: 0,
+            weeks_passed: 0,
+            installments_due: 0,
+            expected_paid: 0,
+            running_balance: 0,
+            status_text: 'On Track'
+        };
+
+        if (loan.status === 'ACTIVE' && loan.disbursed_at && loan.total_due > 0) {
+            const now = new Date();
+            const start = new Date(loan.disbursed_at);
+            const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+            
+            // Calculate Weekly Installment Amount
+            const weeklyAmount = loan.total_due / loan.repayment_weeks;
+
+            // Calculate Time Passed (Weeks completed)
+            // We use Math.floor so payment is due at the END of the week
+            const diffMs = now - start;
+            const weeksPassed = Math.floor(diffMs / oneWeekMs);
+            
+            // Cap expected weeks at total duration (loan doesn't ask for more than total due)
+            const weeksExpected = Math.min(weeksPassed + 1, loan.repayment_weeks); 
+            
+            // Wait, if it's Day 1, Weeks Passed is 0. 
+            // Usually, first payment is due after Week 1. 
+            // So Expected = weeksPassed * weeklyAmount. 
+            // If they pay in Week 1, it's a Pre-payment.
+            
+            const installmentsDue = weeksPassed; // Full weeks passed
+            const amountExpectedSoFar = installmentsDue * weeklyAmount;
+            
+            // CORE LOGIC: Running Balance
+            // Positive = Pre-payment (Paid more than expected)
+            // Negative = Arrears (Paid less than expected)
+            const runningBalance = loan.amount_repaid - amountExpectedSoFar;
+
+            loan.schedule = {
+                weekly_installment: weeklyAmount,
+                weeks_passed: weeksPassed,
+                weeks_remaining: Math.max(0, loan.repayment_weeks - weeksPassed),
+                expected_to_date: amountExpectedSoFar,
+                running_balance: runningBalance,
+                status_text: runningBalance < 0 ? 'IN ARREARS' : 'AHEAD OF SCHEDULE'
+            };
+        }
+
         res.json(loan);
-    } catch (err) { res.status(500).json({ error: "Server Error" }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Server Error" }); 
+    }
 });
 
 // START APPLICATION (With Fee Pending)
