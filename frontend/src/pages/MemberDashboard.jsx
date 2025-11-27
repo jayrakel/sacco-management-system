@@ -133,7 +133,7 @@ export default function MemberDashboard({ user, onLogout }) {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post("/api/payment/repay-loan", {
+      await api.post("/api/payments/repay-loan", {
         loanAppId: loanState.id,
         amount: repayForm.amount,
         mpesaRef: repayForm.mpesaRef || "REF",
@@ -156,7 +156,7 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const handleLoanFeePayment = async () => {
     try {
-      await api.post("/api/payment/pay-fee", {
+      await api.post("/api/payments/pay-fee", {
         loanAppId: loanState.id,
         mpesaRef: "PAYMENT" + Math.floor(10000 + Math.random() * 90000),
       });
