@@ -57,7 +57,7 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN (Updated with Grace Period & Pre-payment Logic)
+// 2. REPAY LOAN
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -65,8 +65,7 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     try {
         await client.query('BEGIN');
 
-        // 1. Fetch ALL data needed for Schedule Calculation
-        // We grab columns needed for utils.calculateLoanSchedule
+        // 1. Fetch Loan Data
         const loanRes = await client.query(
             `SELECT id, user_id, amount_requested, amount_repaid, status, total_due,
                     disbursed_at, grace_period_weeks, repayment_weeks
@@ -80,74 +79,72 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         if (loan.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
         if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan is not active" });
 
-        // Calculate logic
+        // 2. Process Payment Math
         const targetAmount = parseFloat(loan.total_due || loan.amount_requested);
         const currentPaid = parseFloat(loan.amount_repaid || 0);
         const repaymentAmt = parseFloat(amount);
         const newPaid = currentPaid + repaymentAmt;
 
-        // 2. Record Transaction
+        // 3. Determine if Loan is Completed
+        let newStatus = 'ACTIVE';
+        if (newPaid >= targetAmount - 1) { 
+            newStatus = 'COMPLETED';
+        }
+
+        // 4. Calculate New Running Balance (Using the new paid amount)
+        // We create a temporary loan object with the new values to pass to our utility
+        const tempLoanState = { ...loan, amount_repaid: newPaid, status: newStatus };
+        const schedule = calculateLoanSchedule(tempLoanState);
+
+        // 5. Update Database (Including the new running_balance)
+        await client.query(
+            `UPDATE loan_applications 
+             SET amount_repaid = $1, 
+                 status = $2, 
+                 running_balance = $3,
+                 updated_at = NOW()
+             WHERE id = $4`,
+            [newPaid, newStatus, schedule.running_balance, loanAppId]
+        );
+
+        // 6. Record Transaction
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
              VALUES ($1, 'LOAN_REPAYMENT', $2, $3)`,
             [req.user.id, repaymentAmt, mpesaRef]
         );
 
-        // 3. Check Completion
-        let newStatus = 'ACTIVE';
-        if (newPaid >= targetAmount - 1) { // Allow small buffer for float math
-            newStatus = 'COMPLETED';
-        }
-
-        // 4. Update Loan in DB
-        await client.query(
-            `UPDATE loan_applications 
-             SET amount_repaid = $1, status = $2, updated_at = NOW()
-             WHERE id = $3`,
-            [newPaid, newStatus, loanAppId]
-        );
-
-        // 5. Generate Receipt Feedback using Shared Logic
-        // We temporarily update the local loan object to run the calculation on the *new* state
-        loan.amount_repaid = newPaid; 
-        
-        // Ensure numbers are parsed for the util function
-        loan.total_due = parseFloat(loan.total_due);
-        loan.repayment_weeks = parseInt(loan.repayment_weeks);
-        loan.grace_period_weeks = parseInt(loan.grace_period_weeks);
-
-        const schedule = calculateLoanSchedule(loan);
-        
-        let message = "Repayment received.";
-        if (newStatus === 'COMPLETED') {
-            message = "Congratulations! Loan fully repaid.";
-        } else if (schedule.in_grace_period) {
-            message = `Pre-payment Accepted! Grace period active (${schedule.grace_days_left} days left).`;
-        } else if (schedule.running_balance > 0) {
-            // User has paid MORE than what was expected by today
-            const weeksCovered = Math.floor(schedule.running_balance / schedule.weekly_installment);
-            if (weeksCovered > 0) {
-                message = `Payment Accepted. You are now ${weeksCovered} weeks ahead of schedule!`;
-            } else {
-                message = "Payment Accepted. You are on track.";
-            }
-        } else if (schedule.running_balance < 0) {
-            message = "Payment Accepted. You are still in arrears, please clear the balance.";
-        }
-
         await client.query('COMMIT');
         
+        // 7. Feedback Message
+        let message = "Repayment received.";
+        if (newStatus === 'COMPLETED') {
+            message = "Congratulations! Your loan has been fully repaid.";
+        } else if (schedule.arrears > 0) {
+            message = `Payment accepted. You still have arrears of ${schedule.arrears.toFixed(2)}.`;
+        } else if (schedule.pre_payment > 0) {
+            const weeksCovered = Math.floor(schedule.pre_payment / schedule.weekly_installment);
+            if (weeksCovered >= 1) {
+                message = `Payment accepted. You are ${weeksCovered} weeks ahead of schedule!`;
+            } else {
+                message = "Payment accepted. You have a small pre-payment balance.";
+            }
+        } else {
+            message = "Payment accepted. You are perfectly on track.";
+        }
+
         res.json({ 
             success: true, 
             message: message,
-            balance: Math.max(0, targetAmount - newPaid),
-            schedule_status: schedule.status_text // 'ON TRACK', 'IN ARREARS', etc.
+            balance_due: Math.max(0, targetAmount - newPaid),
+            schedule_status: schedule.status_text,
+            running_balance: schedule.running_balance
         });
 
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error(err);
-        res.status(500).json({ error: "Repayment Failed" });
+        console.error("Repayment Error:", err);
+        res.status(500).json({ error: "Repayment processing failed." });
     } finally {
         client.release();
     }
