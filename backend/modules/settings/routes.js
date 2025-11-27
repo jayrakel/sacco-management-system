@@ -4,12 +4,9 @@ const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 
 // GET ALL SETTINGS
-// Authenticated users can read settings (Admin needs list, Member needs values)
 router.get('/', authenticateUser, async (req, res) => {
     try {
         const result = await db.query("SELECT * FROM system_settings ORDER BY setting_key ASC");
-        // FIX: Return the raw array (rows) so Admin Dashboard can map() over it
-        // and access the 'description' field.
         res.json(result.rows); 
     } catch (err) {
         console.error(err);
@@ -17,11 +14,18 @@ router.get('/', authenticateUser, async (req, res) => {
     }
 });
 
-// UPDATE SETTING (Restricted to ADMIN only)
+// UPDATE SETTING (Upsert Logic)
 router.post('/update', authenticateUser, requireRole('ADMIN'), async (req, res) => {
     const { key, value } = req.body;
     try {
-        await db.query("UPDATE system_settings SET setting_value = $1 WHERE setting_key = $2", [value, key]);
+        // UPSERT: Try to insert, if key exists, update the value
+        await db.query(
+            `INSERT INTO system_settings (setting_key, setting_value) 
+             VALUES ($1, $2) 
+             ON CONFLICT (setting_key) 
+             DO UPDATE SET setting_value = EXCLUDED.setting_value`, 
+            [key, String(value)]
+        );
         res.json({ success: true });
     } catch (err) {
         console.error(err);

@@ -68,19 +68,31 @@ export default function AdminDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
+    // FIXED: Handle case where setting doesn't exist in local state yet
     const handleSettingUpdate = async (key, newValue) => {
+        const valStr = String(newValue);
         try {
-            await api.post('/api/settings/update', { key, value: String(newValue) });
-            setSettings(prev => prev.map(s => s.setting_key === key ? { ...s, setting_value: String(newValue) } : s));
+            await api.post('/api/settings/update', { key, value: valStr });
+            
+            setSettings(prev => {
+                const exists = prev.find(s => s.setting_key === key);
+                if (exists) {
+                    return prev.map(s => s.setting_key === key ? { ...s, setting_value: valStr } : s);
+                } else {
+                    // Add it if missing
+                    return [...prev, { setting_key: key, setting_value: valStr, description: 'System Setting' }];
+                }
+            });
             alert("Setting saved!");
         } catch (err) {
+            console.error(err);
             alert("Failed to update setting");
         }
     };
 
     const getSettingValue = (key) => {
         const s = settings.find(x => x.setting_key === key);
-        return s ? s.setting_value : '';
+        return s ? s.setting_value : ''; // Default to empty string if not found
     };
 
     // --- RENDERERS ---
