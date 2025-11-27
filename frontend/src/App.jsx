@@ -1,35 +1,45 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
-import MemberDashboard from './pages/MemberDashboard';
-import SecretaryDashboard from './pages/SecretaryDashboard';
-import AdminDashboard from './pages/AdminDashboard';
-import TreasurerDashboard from './pages/TreasurerDashboard';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import Login from "./pages/Login";
+import MemberDashboard from "./pages/MemberDashboard";
+import SecretaryDashboard from "./pages/SecretaryDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import TreasurerDashboard from "./pages/TreasurerDashboard";
+import ChangePassword from "./pages/ChangePassword";
 
 // SECURITY SETTING: Time in milliseconds before auto-logout
 // 5 minutes * 60 seconds * 1000 milliseconds
-const INACTIVITY_LIMIT = 5 * 60 * 1000; 
+const INACTIVITY_LIMIT = 5 * 60 * 1000;
 
 export default function App() {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('user');
+    const savedUser = localStorage.getItem("user");
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
-  // 1. Define Logout Function (memoized with useCallback)
   const handleLogout = useCallback(() => {
-    console.log("Logging out...");
     setUser(null);
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
-    // Optional: Call backend logout route here if you implement server-side session destruction
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
   }, []);
 
+  // NEW Helper: Updates local user state when password is changed successfully
+  const handlePasswordUpdated = () => {
+    const updatedUser = { ...user, mustChangePassword: false };
+    setUser(updatedUser);
+    localStorage.setItem("user", JSON.stringify(updatedUser));
+  };
+
   const getRedirectPath = (role) => {
-    if (role === 'ADMIN') return '/admin';
-    if (role === 'SECRETARY') return '/secretary';
-    if (role === 'TREASURER') return '/treasurer';
-    return '/member';
+    if (role === "ADMIN") return "/admin";
+    if (role === "SECRETARY") return "/secretary";
+    if (role === "TREASURER") return "/treasurer";
+    return "/member";
   };
 
   // 2. NEW: Inactivity Monitor
@@ -42,7 +52,7 @@ export default function App() {
     const resetTimer = () => {
       // Clear the existing timer
       if (timeoutId) clearTimeout(timeoutId);
-      
+
       // Set a new timer
       timeoutId = setTimeout(() => {
         alert("For your security, you have been logged out due to inactivity.");
@@ -51,10 +61,10 @@ export default function App() {
     };
 
     // Events that define "activity"
-    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
 
     // Attach listeners
-    events.forEach(event => window.addEventListener(event, resetTimer));
+    events.forEach((event) => window.addEventListener(event, resetTimer));
 
     // Start the timer immediately upon login/load
     resetTimer();
@@ -62,38 +72,84 @@ export default function App() {
     // Cleanup function (runs when component unmounts or user logs out)
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
-      events.forEach(event => window.removeEventListener(event, resetTimer));
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
     };
   }, [user, handleLogout]); // Dependencies ensure this runs when user state changes
 
   return (
     <Router>
       <Routes>
-        <Route 
-          path="/" 
-          element={!user ? <Login setUser={setUser} /> : <Navigate to={getRedirectPath(user.role)} />} 
+        <Route
+          path="/"
+          element={
+            !user ? (
+              <Login setUser={setUser} />
+            ) : user.mustChangePassword ? (
+              <Navigate to="/change-password" />
+            ) : (
+              <Navigate to={getRedirectPath(user.role)} />
+            )
+          }
         />
-        
+        {/* NEW ROUTE FOR CHANGE PASSWORD */}
         <Route 
-          path="/member" 
-          element={user && user.role === 'MEMBER' ? <MemberDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
+          path="/change-password" 
+          element={
+             user && user.mustChangePassword 
+             ? <ChangePassword onPasswordChanged={handlePasswordUpdated} /> 
+             : <Navigate to="/" /> 
+          } 
         />
-        
-        <Route 
-          path="/secretary" 
-          element={user && user.role === 'SECRETARY' ? <SecretaryDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
-        />
-
-        <Route 
-          path="/treasurer" 
-          element={user && user.role === 'TREASURER' ? <TreasurerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
-        />
-        
+        {/* Protected Dashboard Routes (Ensure user exists AND has no password flag) */}
         <Route 
           path="/admin" 
-          element={user && user.role === 'ADMIN' ? <AdminDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
+          element={user && user.role === 'ADMIN' && !user.mustChangePassword ? <AdminDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
         />
-        
+
+        <Route
+          path="/member"
+          element={
+            user && user.role === "MEMBER" ? (
+              <MemberDashboard user={user} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+
+        <Route
+          path="/secretary"
+          element={
+            user && user.role === "SECRETARY" ? (
+              <SecretaryDashboard user={user} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+
+        <Route
+          path="/treasurer"
+          element={
+            user && user.role === "TREASURER" ? (
+              <TreasurerDashboard user={user} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+
+        {/* <Route
+          path="/admin"
+          element={
+            user && user.role === "ADMIN" ? (
+              <AdminDashboard user={user} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        /> */}
+
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>
