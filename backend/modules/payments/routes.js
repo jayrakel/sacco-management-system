@@ -43,7 +43,7 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN
+// 2. REPAY LOAN (Updated for Interest)
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -51,35 +51,37 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     try {
         await client.query('BEGIN');
 
-        // Check loan status
+        // FETCH columns needed for logic, including total_due
         const loanRes = await client.query(
-            "SELECT user_id, amount_requested, amount_repaid, status FROM loan_applications WHERE id=$1", 
+            `SELECT user_id, amount_requested, amount_repaid, status, total_due 
+             FROM loan_applications WHERE id=$1`, 
             [loanAppId]
         );
 
         if (loanRes.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
         const loan = loanRes.rows[0];
 
-        // Security Checks
         if (loan.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
         if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan is not active" });
 
-        // Calculate new total paid
+        // LOGIC CHANGE: Use total_due if it exists (new loans), else use amount_requested (old loans)
+        const targetAmount = parseFloat(loan.total_due || loan.amount_requested);
+        
         const currentPaid = parseFloat(loan.amount_repaid || 0);
-        const newPaid = currentPaid + parseInt(amount);
-        const totalOwed = parseFloat(loan.amount_requested);
+        const repaymentAmt = parseFloat(amount);
+        const newPaid = currentPaid + repaymentAmt;
 
         // 1. Record Transaction
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
              VALUES ($1, 'LOAN_REPAYMENT', $2, $3)`,
-            [req.user.id, amount, mpesaRef]
+            [req.user.id, repaymentAmt, mpesaRef]
         );
 
-        // 2. Update Loan Balance
+        // 2. Check Completion
         let newStatus = 'ACTIVE';
-        if (newPaid >= totalOwed) {
-            newStatus = 'COMPLETED'; // Loan fully paid!
+        if (newPaid >= targetAmount - 1) { // -1 for small floating point differences
+            newStatus = 'COMPLETED';
         }
 
         await client.query(
@@ -93,8 +95,8 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         
         res.json({ 
             success: true, 
-            message: newStatus === 'COMPLETED' ? "Congratulations! Loan fully repaid." : "Repayment received.",
-            balance: Math.max(0, totalOwed - newPaid)
+            message: newStatus === 'COMPLETED' ? "Loan fully repaid!" : "Repayment received.",
+            balance: Math.max(0, targetAmount - newPaid)
         });
 
     } catch (err) {

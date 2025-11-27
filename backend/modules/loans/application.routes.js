@@ -8,16 +8,21 @@ const { notifyUser, notifyAll } = require('../common/notify'); // Added notifyAl
 // GET MY LOAN STATUS
 router.get('/status', async (req, res) => {
     try {
+        // Added total_due and interest_amount to query
         const result = await db.query(
-            `SELECT id, status, fee_amount, amount_requested, amount_repaid, purpose, repayment_weeks 
+            `SELECT id, status, fee_amount, amount_requested, amount_repaid, purpose, repayment_weeks, total_due, interest_amount 
              FROM loan_applications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
             [req.user.id]
         );
         if (result.rows.length === 0) return res.json({ status: 'NO_APP' });
         
         const loan = result.rows[0];
+        // Standardize numbers
         loan.amount_requested = parseFloat(loan.amount_requested || 0);
         loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
+        loan.total_due = parseFloat(loan.total_due || 0);
+        loan.interest_amount = parseFloat(loan.interest_amount || 0);
+        
         res.json(loan);
     } catch (err) { res.status(500).json({ error: "Server Error" }); }
 });
