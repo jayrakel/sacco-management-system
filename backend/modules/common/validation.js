@@ -1,5 +1,17 @@
 const Joi = require('joi');
 
+// 1. DEFINED VALID ROLES (Updated to include new Key Officers)
+const VALID_ROLES = [
+    'MEMBER', 
+    'ADMIN', 
+    'SECRETARY', 
+    'TREASURER', 
+    'CHAIRPERSON', 
+    'ASSISTANT_CHAIRPERSON', 
+    'ASSISTANT_SECRETARY', 
+    'LOAN_OFFICER'
+];
+
 const validate = (schema) => {
     return (req, res, next) => {
         const { error } = schema.validate(req.body);
@@ -11,12 +23,15 @@ const validate = (schema) => {
 };
 
 // --- SCHEMAS ---
+
+// 2. REGISTER SCHEMA (Updated to use VALID_ROLES)
 const registerSchema = Joi.object({
     fullName: Joi.string().min(3).max(50).required(),
     email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
-    role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN').default('MEMBER')
+    // This line is the key change: it allows the new roles you requested
+    role: Joi.string().valid(...VALID_ROLES).default('MEMBER')
 });
 
 const loginSchema = Joi.object({
@@ -24,6 +39,7 @@ const loginSchema = Joi.object({
     password: Joi.string().required()
 });
 
+// 3. EXISTING LOAN SCHEMAS (Restored from your version)
 const loanSubmitSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
     amount: Joi.number().integer().min(500).max(1000000).required(),
@@ -31,16 +47,14 @@ const loanSubmitSchema = Joi.object({
     repaymentWeeks: Joi.number().integer().min(1).max(52).required()
 });
 
-// Fee Payment (Fixed Amount)
 const paymentSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
     mpesaRef: Joi.string().pattern(/^[A-Z0-9]{10,15}$/).required()
 });
 
-// New: Loan Repayment (Variable Amount)
 const repaymentSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
-    amount: Joi.number().integer().min(50).required(), // Min Repayment 50
+    amount: Joi.number().integer().min(50).required(),
     mpesaRef: Joi.string().required()
 });
 
@@ -58,7 +72,8 @@ module.exports = {
     loginSchema, 
     loanSubmitSchema, 
     paymentSchema,
-    repaymentSchema, // <--- Exported here
+    repaymentSchema,
     tableLoanSchema,
-    disburseSchema
+    disburseSchema,
+    VALID_ROLES // Exporting this is helpful for the Setup Wizard
 };

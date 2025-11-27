@@ -4,9 +4,82 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('./middleware');
-const { validate, registerSchema, loginSchema } = require('../common/validation');
+const { validate, registerSchema, loginSchema, VALID_ROLES } = require('../common/validation');
 
-// REGISTER (Protected: Admin Only)
+// 1. CHECK SYSTEM SETUP STATUS (Used to force wizard)
+router.get('/setup-status', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+    try {
+        // Count existing users by role
+        const result = await db.query(`
+            SELECT role, COUNT(*) as count 
+            FROM users 
+            WHERE role IN ('CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER')
+            GROUP BY role
+        `);
+
+        const counts = {};
+        result.rows.forEach(row => {
+            counts[row.role] = parseInt(row.count);
+        });
+
+        // Define strict requirements
+        const required = ['CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER'];
+        const missing = required.filter(role => !counts[role] || counts[role] === 0);
+
+        res.json({
+            isComplete: missing.length === 0,
+            missingRoles: missing,
+            counts: counts
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Status check failed" });
+    }
+});
+
+// 2. CREATE KEY USER (Wizard Endpoint)
+router.post('/create-key-user', authenticateUser, requireRole('ADMIN'), validate(registerSchema), async (req, res) => {
+    const { fullName, email, password, role, phoneNumber } = req.body;
+
+    const KEY_ROLES = ['CHAIRPERSON', 'ASSISTANT_CHAIRPERSON', 'SECRETARY', 'ASSISTANT_SECRETARY', 'TREASURER', 'LOAN_OFFICER'];
+    
+    if (!KEY_ROLES.includes(role)) {
+        return res.status(400).json({ error: "This endpoint is for Key Users only. Use standard registration for Members." });
+    }
+
+    try {
+        // Check email dupes
+        const userCheck = await db.query("SELECT id FROM users WHERE email = $1", [email]);
+        if (userCheck.rows.length > 0) return res.status(400).json({ error: "Email already exists" });
+
+        // Enforce Single Responsibility for primary roles
+        if (['CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(role)) {
+             const roleCheck = await db.query("SELECT id FROM users WHERE role = $1", [role]);
+             if (roleCheck.rows.length > 0) {
+                 return res.status(400).json({ error: `A ${role} already exists. Only one is allowed.` });
+             }
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(password, salt);
+
+        // Create user - set must_change_password to TRUE for security
+        const result = await db.query(
+            `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password) 
+             VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id, role`,
+            [fullName, email, hash, role, phoneNumber]
+        );
+
+        res.json({ message: `${role} created successfully`, user: result.rows[0] });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Creation failed" });
+    }
+});
+
+// 3. STANDARD REGISTER (Admin creating Members)
 router.post('/register', authenticateUser, requireRole('ADMIN'), validate(registerSchema), async (req, res) => {
     const { fullName, email, password, role, phoneNumber } = req.body;
 
@@ -20,7 +93,7 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
         const result = await db.query(
             `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
              VALUES ($1, $2, $3, $4, $5) RETURNING id, email, role`,
-            [fullName, email, hash, role, phoneNumber]
+            [fullName, email, hash, role || 'MEMBER', phoneNumber]
         );
 
         res.json({ message: "User registered successfully", user: result.rows[0] });
@@ -28,9 +101,9 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
         console.error(err);
         res.status(500).json({ error: "Registration failed" });
     }
-})
+});
 
-// LOGIN (Updated)
+// 4. LOGIN
 router.post('/login', validate(loginSchema), async (req, res) => {
     const { email, password } = req.body;
 
@@ -62,7 +135,6 @@ router.post('/login', validate(loginSchema), async (req, res) => {
                 name: user.full_name, 
                 role: user.role, 
                 email: user.email,
-                // Pass this flag to frontend
                 mustChangePassword: user.must_change_password 
             }
         });
@@ -73,7 +145,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     }
 });
 
-// NEW: FORCE PASSWORD CHANGE ROUTE
+// 5. CHANGE PASSWORD
 router.post('/change-password', authenticateUser, async (req, res) => {
     const { newPassword } = req.body;
 
@@ -100,13 +172,13 @@ router.post('/change-password', authenticateUser, async (req, res) => {
     }
 });
 
-// Logout Route (Optional but good practice)
+// 6. LOGOUT
 router.post('/logout', (req, res) => {
     res.clearCookie('token');
     res.json({ message: "Logged out successfully" });
 });
 
-// GET ALL USERS (Admin Only)
+// 7. GET ALL USERS
 router.get('/users', authenticateUser, requireRole('ADMIN'), async (req, res) => {
     try {
         const result = await db.query(

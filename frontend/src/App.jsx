@@ -1,154 +1,136 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
-import Login from "./pages/Login";
-import MemberDashboard from "./pages/MemberDashboard";
-import SecretaryDashboard from "./pages/SecretaryDashboard";
-import AdminDashboard from "./pages/AdminDashboard";
-import TreasurerDashboard from "./pages/TreasurerDashboard";
-import ChangePassword from "./pages/ChangePassword";
+import React, { useState, useEffect, useCallback } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Login from './pages/Login';
+import ChangePassword from './pages/ChangePassword';
+import SetupUsers from './pages/SetupUsers';
+import AdminDashboard from './pages/AdminDashboard';
+import MemberDashboard from './pages/MemberDashboard';
+import SecretaryDashboard from './pages/SecretaryDashboard';
+import TreasurerDashboard from './pages/TreasurerDashboard';
+import api from './api';
 
-// SECURITY SETTING: Time in milliseconds before auto-logout
-// 5 minutes * 60 seconds * 1000 milliseconds
-const INACTIVITY_LIMIT = 5 * 60 * 1000;
+const INACTIVITY_LIMIT = 5 * 60 * 1000; // 5 Minutes
 
 export default function App() {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem("user");
+    const savedUser = localStorage.getItem('user');
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
+  // Track if system is ready (all officers created)
+  const [isSetupComplete, setIsSetupComplete] = useState(true);
+  const [isLoadingSetup, setIsLoadingSetup] = useState(false);
+
   const handleLogout = useCallback(() => {
     setUser(null);
-    localStorage.removeItem("user");
-    localStorage.removeItem("token");
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    localStorage.removeItem('lastActivity');
   }, []);
 
-  // NEW Helper: Updates local user state when password is changed successfully
+  // --- 1. Inactivity Logic ---
+  useEffect(() => {
+    if (!user) return;
+
+    const updateActivity = () => localStorage.setItem('lastActivity', Date.now());
+    
+    const checkInactivity = () => {
+      const lastActivity = parseInt(localStorage.getItem('lastActivity') || Date.now());
+      if (Date.now() - lastActivity > INACTIVITY_LIMIT) {
+        handleLogout();
+        window.location.href = '/';
+      }
+    };
+
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    const interval = setInterval(checkInactivity, 30000);
+
+    return () => {
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      clearInterval(interval);
+    };
+  }, [user, handleLogout]);
+
+  // --- 2. Setup Check Logic (Admin Only) ---
+  useEffect(() => {
+    if (user && user.role === 'ADMIN') {
+        setIsLoadingSetup(true);
+        api.get('/api/auth/setup-status')
+           .then(res => {
+               setIsSetupComplete(res.data.isComplete);
+           })
+           .catch(err => console.error("Setup check failed", err))
+           .finally(() => setIsLoadingSetup(false));
+    }
+  }, [user]);
+
   const handlePasswordUpdated = () => {
     const updatedUser = { ...user, mustChangePassword: false };
     setUser(updatedUser);
-    localStorage.setItem("user", JSON.stringify(updatedUser));
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
+  const handleSetupDone = () => {
+      setIsSetupComplete(true);
   };
 
   const getRedirectPath = (role) => {
-    if (role === "ADMIN") return "/admin";
-    if (role === "SECRETARY") return "/secretary";
-    if (role === "TREASURER") return "/treasurer";
-    return "/member";
+    if (role === 'ADMIN') return '/admin';
+    if (role === 'SECRETARY') return '/secretary';
+    if (role === 'TREASURER') return '/treasurer';
+    return '/member';
   };
-
-  // 2. NEW: Inactivity Monitor
-  useEffect(() => {
-    // Only activate listener if a user is logged in
-    if (!user) return;
-
-    let timeoutId;
-
-    const resetTimer = () => {
-      // Clear the existing timer
-      if (timeoutId) clearTimeout(timeoutId);
-
-      // Set a new timer
-      timeoutId = setTimeout(() => {
-        alert("For your security, you have been logged out due to inactivity.");
-        handleLogout();
-      }, INACTIVITY_LIMIT);
-    };
-
-    // Events that define "activity"
-    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
-
-    // Attach listeners
-    events.forEach((event) => window.addEventListener(event, resetTimer));
-
-    // Start the timer immediately upon login/load
-    resetTimer();
-
-    // Cleanup function (runs when component unmounts or user logs out)
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      events.forEach((event) => window.removeEventListener(event, resetTimer));
-    };
-  }, [user, handleLogout]); // Dependencies ensure this runs when user state changes
 
   return (
     <Router>
       <Routes>
-        <Route
-          path="/"
-          element={
-            !user ? (
-              <Login setUser={setUser} />
-            ) : user.mustChangePassword ? (
-              <Navigate to="/change-password" />
-            ) : (
-              <Navigate to={getRedirectPath(user.role)} />
-            )
-          }
-        />
-        {/* NEW ROUTE FOR CHANGE PASSWORD */}
+        {/* ROOT ROUTE LOGIC:
+          1. Not Logged In -> Login
+          2. Logged In + Must Change Password -> Change Password
+          3. Admin + Setup Not Complete -> Setup Wizard
+          4. Normal -> Dashboard
+        */}
         <Route 
-          path="/change-password" 
+          path="/" 
           element={
-             user && user.mustChangePassword 
-             ? <ChangePassword onPasswordChanged={handlePasswordUpdated} /> 
-             : <Navigate to="/" /> 
+            !user ? <Login setUser={setUser} /> : 
+            user.mustChangePassword ? <Navigate to="/change-password" /> : 
+            (user.role === 'ADMIN' && !isSetupComplete && !isLoadingSetup) ? <Navigate to="/setup" /> : 
+            <Navigate to={getRedirectPath(user.role)} />
           } 
         />
-        {/* Protected Dashboard Routes (Ensure user exists AND has no password flag) */}
+
+        <Route 
+          path="/change-password" 
+          element={user && user.mustChangePassword ? <ChangePassword onPasswordChanged={handlePasswordUpdated} /> : <Navigate to="/" />} 
+        />
+
+        {/* SETUP WIZARD ROUTE */}
+        <Route 
+          path="/setup" 
+          element={
+            user && user.role === 'ADMIN' && !isSetupComplete 
+            ? <SetupUsers onSetupComplete={handleSetupDone} /> 
+            : <Navigate to="/" />
+          } 
+        />
+        
+        {/* DASHBOARDS */}
+        <Route path="/member" element={user && user.role === 'MEMBER' ? <MemberDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
+        <Route path="/secretary" element={user && user.role === 'SECRETARY' ? <SecretaryDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
+        <Route path="/treasurer" element={user && user.role === 'TREASURER' ? <TreasurerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} />
+        
+        {/* Admin Dashboard: Protected by setup completion */}
         <Route 
           path="/admin" 
-          element={user && user.role === 'ADMIN' && !user.mustChangePassword ? <AdminDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
-        />
-
-        <Route
-          path="/member"
           element={
-            user && user.role === "MEMBER" ? (
-              <MemberDashboard user={user} onLogout={handleLogout} />
-            ) : (
-              <Navigate to="/" />
-            )
-          }
+            user && user.role === 'ADMIN' 
+            ? (isSetupComplete ? <AdminDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/setup" />) 
+            : <Navigate to="/" />
+          } 
         />
-
-        <Route
-          path="/secretary"
-          element={
-            user && user.role === "SECRETARY" ? (
-              <SecretaryDashboard user={user} onLogout={handleLogout} />
-            ) : (
-              <Navigate to="/" />
-            )
-          }
-        />
-
-        <Route
-          path="/treasurer"
-          element={
-            user && user.role === "TREASURER" ? (
-              <TreasurerDashboard user={user} onLogout={handleLogout} />
-            ) : (
-              <Navigate to="/" />
-            )
-          }
-        />
-
-        {/* <Route
-          path="/admin"
-          element={
-            user && user.role === "ADMIN" ? (
-              <AdminDashboard user={user} onLogout={handleLogout} />
-            ) : (
-              <Navigate to="/" />
-            )
-          }
-        /> */}
 
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
