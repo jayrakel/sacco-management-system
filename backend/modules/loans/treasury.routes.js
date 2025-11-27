@@ -65,7 +65,8 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
                  interest_amount=$1, 
                  total_due=$2, 
                  updated_at=NOW(), 
-                 disbursed_at=NOW() -- NEW: Start the clock
+                 disbursed_at=NOW(), -- NEW: Start the clock
+                 grace_period_weeks= COALESCE(grace_period_weeks, 4) -- Ensure a default of 4 if null
              WHERE id=$3`, 
             [interest, totalDue, loanId]
         );

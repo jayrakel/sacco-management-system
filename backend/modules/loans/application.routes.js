@@ -5,13 +5,13 @@ const { validate, loanSubmitSchema } = require('../common/validation');
 const { getSetting } = require('../settings/routes');
 const { notifyUser, notifyAll } = require('../common/notify'); // Added notifyAll import
 
-// GET MY LOAN STATUS (With Weekly Schedule Logic)
+// GET MY LOAN STATUS (With Grace Period Logic)
 router.get('/status', async (req, res) => {
     try {
-        // 1. Fetch Loan Data
+        // 1. Fetch Loan Data including grace_period_weeks
         const result = await db.query(
             `SELECT id, status, fee_amount, amount_requested, amount_repaid, 
-                    purpose, repayment_weeks, total_due, interest_amount, disbursed_at 
+                    purpose, repayment_weeks, total_due, interest_amount, disbursed_at, grace_period_weeks 
              FROM loan_applications 
              WHERE user_id = $1 
              ORDER BY created_at DESC LIMIT 1`,
@@ -28,54 +28,65 @@ router.get('/status', async (req, res) => {
         loan.total_due = parseFloat(loan.total_due || 0);
         loan.interest_amount = parseFloat(loan.interest_amount || 0);
         loan.repayment_weeks = parseInt(loan.repayment_weeks || 0);
+        const graceWeeks = parseInt(loan.grace_period_weeks || 0);
 
-        // 3. Calculate Weekly Schedule (If Active)
+        // 3. Calculate Schedule
         loan.schedule = {
             weekly_installment: 0,
             weeks_passed: 0,
-            installments_due: 0,
-            expected_paid: 0,
+            weeks_remaining: loan.repayment_weeks,
+            expected_to_date: 0,
             running_balance: 0,
-            status_text: 'On Track'
+            status_text: 'Inactive',
+            in_grace_period: false,
+            grace_days_left: 0
         };
 
         if (loan.status === 'ACTIVE' && loan.disbursed_at && loan.total_due > 0) {
             const now = new Date();
             const start = new Date(loan.disbursed_at);
             const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-            
-            // Calculate Weekly Installment Amount
+            const oneDayMs = 24 * 60 * 60 * 1000;
+
+            // Weekly Installment Amount
             const weeklyAmount = loan.total_due / loan.repayment_weeks;
+            
+            // Time elapsed since disbursement
+            const elapsedMs = now - start;
+            const gracePeriodMs = graceWeeks * oneWeekMs;
 
-            // Calculate Time Passed (Weeks completed)
-            // We use Math.floor so payment is due at the END of the week
-            const diffMs = now - start;
-            const weeksPassed = Math.floor(diffMs / oneWeekMs);
-            
-            // Cap expected weeks at total duration (loan doesn't ask for more than total due)
-            const weeksExpected = Math.min(weeksPassed + 1, loan.repayment_weeks); 
-            
-            // Wait, if it's Day 1, Weeks Passed is 0. 
-            // Usually, first payment is due after Week 1. 
-            // So Expected = weeksPassed * weeklyAmount. 
-            // If they pay in Week 1, it's a Pre-payment.
-            
-            const installmentsDue = weeksPassed; // Full weeks passed
-            const amountExpectedSoFar = installmentsDue * weeklyAmount;
-            
-            // CORE LOGIC: Running Balance
-            // Positive = Pre-payment (Paid more than expected)
-            // Negative = Arrears (Paid less than expected)
-            const runningBalance = loan.amount_repaid - amountExpectedSoFar;
+            // CHECK IF IN GRACE PERIOD
+            if (elapsedMs < gracePeriodMs) {
+                loan.schedule.in_grace_period = true;
+                loan.schedule.grace_days_left = Math.ceil((gracePeriodMs - elapsedMs) / oneDayMs);
+                loan.schedule.status_text = 'IN GRACE PERIOD';
+                // In grace period, expected to pay is 0. 
+                // Any payment made is technically a pre-payment, or just sitting there.
+                loan.schedule.expected_to_date = 0;
+                loan.schedule.running_balance = loan.amount_repaid; // Positive balance
+            } else {
+                // Grace period over - Schedule starts counting effectively from END of grace period
+                const activeTimeMs = elapsedMs - gracePeriodMs;
+                
+                // Weeks passed SINCE grace period ended
+                const weeksPassed = Math.floor(activeTimeMs / oneWeekMs);
 
-            loan.schedule = {
-                weekly_installment: weeklyAmount,
-                weeks_passed: weeksPassed,
-                weeks_remaining: Math.max(0, loan.repayment_weeks - weeksPassed),
-                expected_to_date: amountExpectedSoFar,
-                running_balance: runningBalance,
-                status_text: runningBalance < 0 ? 'IN ARREARS' : 'AHEAD OF SCHEDULE'
-            };
+                // Installments due: payment is usually due at the END of the first week after grace
+                // So if activeTime is 1 day, 0 installments are due. 
+                // If activeTime is 8 days, 1 installment is due.
+                const installmentsDue = weeksPassed;
+
+                const amountExpectedSoFar = installmentsDue * weeklyAmount;
+                const runningBalance = loan.amount_repaid - amountExpectedSoFar;
+
+                loan.schedule.weeks_passed = weeksPassed;
+                loan.schedule.weeks_remaining = Math.max(0, loan.repayment_weeks - weeksPassed);
+                loan.schedule.expected_to_date = amountExpectedSoFar;
+                loan.schedule.running_balance = runningBalance;
+                loan.schedule.status_text = runningBalance < 0 ? 'IN ARREARS' : 'ON TRACK';
+            }
+
+            loan.schedule.weekly_installment = weeklyAmount;
         }
 
         res.json(loan);

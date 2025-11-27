@@ -726,97 +726,105 @@ export default function MemberDashboard({ user, onLogout }) {
             )}
 
             {loanState.status === 'ACTIVE' && (
-                    <div className="space-y-6">
-                        {/* 1. MAIN REPAYMENT CARD */}
-                        <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-                            <div className="p-6 bg-indigo-900 text-white flex justify-between items-center">
-                                <div>
-                                    <p className="text-indigo-200 text-xs uppercase font-bold">Current Loan Status</p>
-                                    <h3 className="text-2xl font-bold">Active Repayment</h3>
-                                </div>
+    <div className="space-y-6">
+        <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+            
+            {/* Header */}
+            <div className="p-6 bg-indigo-900 text-white flex justify-between items-center">
+                <div>
+                    <p className="text-indigo-200 text-xs uppercase font-bold">Current Loan</p>
+                    <h3 className="text-2xl font-bold">Active Repayment</h3>
+                </div>
+                <div className="text-right">
+                    {loanState.schedule?.in_grace_period ? (
+                        <div className="bg-amber-400 text-indigo-900 text-xs font-bold px-3 py-1 rounded-full">
+                            GRACE PERIOD
+                        </div>
+                    ) : (
+                        <div>
+                            <p className="text-xs text-indigo-300 uppercase">Week</p>
+                            <p className="text-xl font-bold font-mono">
+                                {loanState.schedule?.weeks_passed} <span className="text-indigo-400 text-sm">/ {loanState.repayment_weeks}</span>
+                            </p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="p-8">
+                {/* STATUS BANNER */}
+                {loanState.schedule && (
+                    <div className={`mb-8 p-4 rounded-xl border-l-4 ${
+                        loanState.schedule.in_grace_period 
+                            ? 'bg-blue-50 border-blue-500'
+                            : loanState.schedule.running_balance < 0 
+                                ? 'bg-red-50 border-red-500' 
+                                : 'bg-emerald-50 border-emerald-500'
+                    }`}>
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <p className={`text-sm font-bold uppercase ${
+                                    loanState.schedule.in_grace_period 
+                                        ? 'text-blue-700'
+                                        : loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
+                                }`}>
+                                    {loanState.schedule.in_grace_period 
+                                        ? "Repayment Holiday"
+                                        : loanState.schedule.running_balance < 0 ? 'Outstanding Arrears' : 'Pre-Payment Credit'}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    {loanState.schedule.in_grace_period 
+                                        ? `You have ${loanState.schedule.grace_days_left} days before your first installment is due.`
+                                        : loanState.schedule.running_balance < 0 
+                                            ? "You are behind schedule. Please pay immediately."
+                                            : "You are ahead of your repayment schedule."}
+                                </p>
+                            </div>
+                            {/* Only show balance number if NOT in grace period, or if they have actually paid something during grace */}
+                            {!loanState.schedule.in_grace_period || loanState.amount_repaid > 0 ? (
                                 <div className="text-right">
-                                    <p className="text-xs text-indigo-300 uppercase">Week</p>
-                                    <p className="text-xl font-bold font-mono">
-                                        {loanState.schedule?.weeks_passed || 0} <span className="text-indigo-400 text-sm">/ {loanState.repayment_weeks}</span>
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="p-8">
-                                {/* Running Balance Indicator */}
-                                {loanState.schedule && (
-                                    <div className={`mb-8 p-4 rounded-xl border-l-4 ${
-                                        loanState.schedule.running_balance < 0 ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'
+                                    <span className={`text-2xl font-bold font-mono ${
+                                        loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
                                     }`}>
-                                        <div className="flex justify-between items-center">
-                                            <div>
-                                                <p className={`text-sm font-bold uppercase ${
-                                                    loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
-                                                }`}>
-                                                    {loanState.schedule.running_balance < 0 ? 'Outstanding Arrears' : 'Pre-Payment Credit'}
-                                                </p>
-                                                <p className="text-xs text-slate-500 mt-1">
-                                                    {loanState.schedule.running_balance < 0 
-                                                        ? "You are behind schedule. Please pay immediately to clear arrears."
-                                                        : "Great job! You are ahead of your repayment schedule."}
-                                                </p>
-                                            </div>
-                                            <div className="text-right">
-                                                <span className={`text-2xl font-bold font-mono ${
-                                                    loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
-                                                }`}>
-                                                    {loanState.schedule.running_balance < 0 ? '-' : '+'} 
-                                                    KES {Math.abs(loanState.schedule.running_balance).toLocaleString()}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Stats Grid */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Loan Due</p>
-                                        <p className="text-lg font-bold text-slate-800">KES {loanState.total_due?.toLocaleString()}</p>
-                                    </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Repaid</p>
-                                        <p className="text-lg font-bold text-emerald-600">KES {loanState.amount_repaid.toLocaleString()}</p>
-                                    </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Weekly Installment</p>
-                                        <p className="text-lg font-bold text-indigo-600">KES {Math.ceil(loanState.schedule?.weekly_installment || 0).toLocaleString()}</p>
-                                    </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Balance Left</p>
-                                        <p className="text-lg font-bold text-red-600">KES {(loanState.total_due - loanState.amount_repaid).toLocaleString()}</p>
-                                    </div>
+                                        {loanState.schedule.running_balance < 0 ? '-' : '+'} 
+                                        KES {Math.abs(loanState.schedule.running_balance).toLocaleString()}
+                                    </span>
                                 </div>
-
-                                {/* Progress Bar */}
-                                <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden mb-8">
-                                    <div 
-                                        className="absolute top-0 left-0 h-full bg-emerald-500 transition-all duration-1000 ease-out"
-                                        style={{ width: `${Math.min(100, (loanState.amount_repaid / loanState.total_due) * 100)}%` }}
-                                    ></div>
-                                    {/* Expected Marker */}
-                                    <div 
-                                        className="absolute top-0 w-1 h-full bg-black/20 z-10"
-                                        style={{ left: `${Math.min(100, (loanState.schedule?.expected_to_date / loanState.total_due) * 100)}%` }}
-                                        title="Expected Progress"
-                                    ></div>
-                                </div>
-
-                                <button 
-                                    onClick={() => setActiveTab('repay')} 
-                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 transition flex items-center justify-center gap-2"
-                                >
-                                    <Banknote size={20}/> Make Weekly Installment
-                                </button>
-                            </div>
+                            ) : null}
                         </div>
                     </div>
                 )}
+
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Due</p>
+                        <p className="text-lg font-bold text-slate-800">KES {loanState.total_due?.toLocaleString()}</p>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Repaid</p>
+                        <p className="text-lg font-bold text-emerald-600">KES {loanState.amount_repaid.toLocaleString()}</p>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Weekly Bill</p>
+                        <p className="text-lg font-bold text-indigo-600">KES {Math.ceil(loanState.schedule?.weekly_installment || 0).toLocaleString()}</p>
+                    </div>
+                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Balance</p>
+                        <p className="text-lg font-bold text-red-600">KES {(loanState.total_due - loanState.amount_repaid).toLocaleString()}</p>
+                    </div>
+                </div>
+
+                <button 
+                    onClick={() => setActiveTab('repay')} 
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 transition flex items-center justify-center gap-2"
+                >
+                    <Banknote size={20}/> Make Repayment
+                </button>
+            </div>
+        </div>
+    </div>
+)}
             {loanState.status === "COMPLETED" && (
               <div className="bg-emerald-50 p-10 rounded-2xl text-center border border-emerald-100">
                 <CheckCircle
