@@ -74,16 +74,43 @@ router.post('/logout', (req, res) => {
     res.json({ message: "Logged out successfully" });
 });
 
-// GET ALL USERS (Admin Only)
-router.get('/users', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+// 1. GET ALL USERS (Shared: Admin & Chairperson needs to see users)
+router.get('/users', authenticateUser, (req, res, next) => {
+    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next();
+    else res.status(403).json({ error: "Access Denied" });
+}, async (req, res) => {
     try {
         const result = await db.query(
             "SELECT id, full_name, email, role, phone_number, created_at FROM users ORDER BY created_at DESC"
         );
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: "Failed to fetch users" });
+    }
+});
+
+// 2. [NEW] RESET USER PASSWORD (Admin Only - IT Task)
+router.post('/users/:id/reset-password', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+    try {
+        // Reset to default string, e.g., "123456"
+        const defaultPass = "123456"; 
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(defaultPass, salt);
+        
+        await db.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, req.params.id]);
+        res.json({ success: true, message: `Password reset to '${defaultPass}'` });
+    } catch (err) {
+        res.status(500).json({ error: "Reset failed" });
+    }
+});
+
+// 3. [NEW] DELETE USER (Admin Only - IT Task)
+router.delete('/users/:id', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+    try {
+        await db.query("DELETE FROM users WHERE id = $1", [req.params.id]);
+        res.json({ success: true, message: "User deleted from system" });
+    } catch (err) {
+        res.status(500).json({ error: "Delete failed" });
     }
 });
 

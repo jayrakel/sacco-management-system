@@ -16,7 +16,8 @@ const registerSchema = Joi.object({
     email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
-    role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN').default('MEMBER')
+    // ADD 'CHAIRPERSON' TO THIS LIST
+    role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN', 'LOAN_OFFICER', 'CHAIRPERSON').default('MEMBER')
 });
 
 const loginSchema = Joi.object({
