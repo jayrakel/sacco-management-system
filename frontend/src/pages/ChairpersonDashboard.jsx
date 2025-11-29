@@ -15,7 +15,7 @@ import DashboardHeader from '../components/DashboardHeader';
 
 export default function ChairpersonDashboard({ user, onLogout }) {
     // Tabs: 'voting', 'finance', 'members', 'settings', 'register'
-    const [activeTab, setActiveTab] = useState('members'); // Default to members to verify fix
+    const [activeTab, setActiveTab] = useState('finance'); 
     
     // Data State
     const [agenda, setAgenda] = useState([]);

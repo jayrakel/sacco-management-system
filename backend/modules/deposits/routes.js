@@ -11,8 +11,11 @@ const depositSchema = Joi.object({
 });
 
 // --- NEW ROUTE START ---
-// GET ALL DEPOSITS (Admin Only)
-router.get('/admin/all', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+// GET ALL DEPOSITS (Admin & Chairperson)
+router.get('/admin/all', authenticateUser, (req, res, next) => {
+    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next(); // <--- MUST INCLUDE CHAIRPERSON
+    else res.status(403).json({ error: "Access Denied" });
+}, async (req, res) => {
     try {
         const result = await db.query(
             `SELECT d.id, d.amount, d.transaction_ref, d.created_at, u.full_name 
@@ -21,10 +24,7 @@ router.get('/admin/all', authenticateUser, requireRole('ADMIN'), async (req, res
              ORDER BY d.created_at DESC`
         );
         res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Could not fetch all deposits" });
-    }
+    } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
 });
 // --- NEW ROUTE END ---
 
