@@ -59,7 +59,7 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
         try {
             // Backend endpoint needed: /api/loan/officer/verify
             // Using a generic update or placeholder for now
-            // await api.post('/api/loan/officer/verify', { loanId });
+            await api.post('/api/loan/officer/verify', { loanId });
             alert("Application verified successfully! (Mock Action)");
             setRefreshKey(k => k + 1);
         } catch (err) {

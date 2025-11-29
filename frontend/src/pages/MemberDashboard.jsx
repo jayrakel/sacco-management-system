@@ -129,11 +129,13 @@ export default function MemberDashboard({ user, onLogout }) {
     }
     setLoading(false);
   };
+
   const handleRepayment = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.post("/api/payment/repay-loan", {
+      // FIX 1: Updated endpoint to plural 'payments'
+      await api.post("/api/payments/repay-loan", {
         loanAppId: loanState.id,
         amount: repayForm.amount,
         mpesaRef: repayForm.mpesaRef || "REF",
@@ -147,6 +149,7 @@ export default function MemberDashboard({ user, onLogout }) {
     }
     setLoading(false);
   };
+
   const handleLoanStart = async () => {
     try {
       await api.post("/api/loan/init");
@@ -156,7 +159,8 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const handleLoanFeePayment = async () => {
     try {
-      await api.post("/api/payment/pay-fee", {
+      // FIX 2: Updated endpoint to plural 'payments'
+      await api.post("/api/payments/pay-fee", {
         loanAppId: loanState.id,
         mpesaRef: "PAYMENT" + Math.floor(10000 + Math.random() * 90000),
       });
@@ -242,14 +246,6 @@ export default function MemberDashboard({ user, onLogout }) {
     } catch (err) {
       showNotify("error", err.response?.data?.error || "Voting Failed");
     }
-  };
-
-  const calculateProgress = () => {
-    if (!loanState.amount_requested) return 0;
-    return Math.min(
-      100,
-      (loanState.amount_repaid / loanState.amount_requested) * 100
-    );
   };
 
   return (
@@ -663,17 +659,27 @@ export default function MemberDashboard({ user, onLogout }) {
               </div>
             )}
 
-            {/* Loan Status Progression */}
-            {loanState.status === "SUBMITTED" && (
+            {/* UPDATED: Handle both SUBMITTED and VERIFIED states */}
+            {['SUBMITTED', 'VERIFIED'].includes(loanState.status) && (
               <div className="bg-white p-10 rounded-2xl shadow-sm border border-blue-100 text-center">
                 <Clock
                   size={40}
                   className="mx-auto text-blue-500 mb-4 animate-pulse"
                 />
                 <h3 className="text-2xl font-bold">Under Review</h3>
-                <p>Application submitted to secretary.</p>
+                <p className="text-slate-500 mb-2">
+                    {loanState.status === 'SUBMITTED' 
+                        ? "Waiting for Credit Officer Appraisal..." 
+                        : "Verified! Waiting for Secretary to Table."}
+                </p>
+                <div className="flex justify-center gap-2 mt-4">
+                    <div className={`h-2 w-8 rounded-full ${loanState.status === 'SUBMITTED' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
+                    <div className={`h-2 w-8 rounded-full ${loanState.status === 'VERIFIED' ? 'bg-blue-500' : 'bg-slate-200'}`}></div>
+                    <div className="h-2 w-8 rounded-full bg-slate-200"></div>
+                </div>
               </div>
             )}
+
             {loanState.status === "TABLED" && (
               <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center">
                 <Vote size={40} className="mx-auto text-purple-500 mb-4" />

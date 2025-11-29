@@ -11,7 +11,8 @@ router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
             `SELECT l.id, l.amount_requested, l.purpose, l.repayment_weeks, u.full_name 
              FROM loan_applications l
              JOIN users u ON l.user_id = u.id
-             WHERE l.status = 'SUBMITTED' ORDER BY l.created_at ASC`
+             WHERE l.status = 'VERIFIED' -- <-- CHANGED FROM 'SUBMITTED'
+             ORDER BY l.created_at ASC`
         );
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: "Agenda Error" }); }
@@ -20,6 +21,10 @@ router.get('/agenda', requireRole('SECRETARY'), async (req, res) => {
 router.post('/table', requireRole('SECRETARY'), validate(tableLoanSchema), async (req, res) => {
     const { loanId } = req.body;
     try {
+        // Ensure we only table verified loans
+        const check = await db.query("SELECT status FROM loan_applications WHERE id=$1", [loanId]);
+        if(check.rows[0].status !== 'VERIFIED') return res.status(400).json({ error: "Loan must be Verified first" });
+
         await db.query("UPDATE loan_applications SET status='TABLED' WHERE id=$1", [loanId]);
         // Notify Admin
         const admins = await db.query("SELECT id FROM users WHERE role='ADMIN'");
