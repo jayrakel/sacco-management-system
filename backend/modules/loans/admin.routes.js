@@ -1,10 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-const { requireRole } = require('../auth/middleware');
+const { requireRole, authenticateUser } = require('../auth/middleware');
 const { notifyAll } = require('../common/notify');
 
-router.get('/admin/all', requireRole('ADMIN'), async (req, res) => {
+router.get('/admin/all', authenticateUser, (req, res, next) => {
+    const allowedRoles = ['ADMIN', 'LOAN_OFFICER'];
+    if (allowedRoles.includes(req.user.role)) {
+        next();
+    } else {
+        res.status(403).json({ error: "Access Denied: Insufficient Permissions" });
+    }
+}, async (req, res) => {
     try {
         const result = await db.query(
             `SELECT l.*, u.full_name 
@@ -13,7 +20,10 @@ router.get('/admin/all', requireRole('ADMIN'), async (req, res) => {
              ORDER BY l.created_at DESC`
         );
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: "Fetch error" }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Fetch error" }); 
+    }
 });
 
 router.get('/admin/agenda', requireRole('ADMIN'), async (req, res) => {

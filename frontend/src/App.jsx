@@ -5,6 +5,7 @@ import MemberDashboard from './pages/MemberDashboard';
 import SecretaryDashboard from './pages/SecretaryDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import TreasurerDashboard from './pages/TreasurerDashboard';
+import LoanOfficerDashboard from './pages/LoanOfficerDashboard';
 
 // SECURITY SETTING: Time in milliseconds before auto-logout
 // 5 minutes * 60 seconds * 1000 milliseconds
@@ -29,6 +30,7 @@ export default function App() {
     if (role === 'ADMIN') return '/admin';
     if (role === 'SECRETARY') return '/secretary';
     if (role === 'TREASURER') return '/treasurer';
+    if (role === 'LOAN_OFFICER') return '/loan-officer';
     return '/member';
   };
 
@@ -79,6 +81,11 @@ export default function App() {
           element={user && user.role === 'MEMBER' ? <MemberDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
         />
         
+        <Route 
+          path="/loan-officer" 
+          element={user && user.role === 'LOAN_OFFICER' ? <LoanOfficerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
+        />
+
         <Route 
           path="/secretary" 
           element={user && user.role === 'SECRETARY' ? <SecretaryDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
