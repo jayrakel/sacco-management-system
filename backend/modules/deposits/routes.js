@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-// UPDATE: Import requireRole
 const { authenticateUser, requireRole } = require('../auth/middleware');
 const Joi = require('joi');
 
