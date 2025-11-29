@@ -6,6 +6,7 @@ const { validate, paymentSchema, repaymentSchema } = require('../common/validati
 
 // 1. PAY APPLICATION FEE
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
+    // ... (Keep existing code as is)
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
 
@@ -43,8 +44,9 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN (Updated for Interest)
+// 2. REPAY LOAN
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
+    // ... (Keep existing code as is)
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
 
@@ -108,8 +110,12 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// GET ALL TRANSACTIONS (Admin)
-router.get('/admin/all', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+// GET ALL TRANSACTIONS (Updated to allow CHAIRPERSON)
+router.get('/admin/all', authenticateUser, (req, res, next) => {
+    // Allow both ADMIN and CHAIRPERSON
+    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next();
+    else res.status(403).json({ error: "Access Denied" });
+}, async (req, res) => {
     try {
         const result = await db.query(
             `SELECT t.*, u.full_name 

@@ -9,17 +9,24 @@ import {
     Save, 
     DollarSign, 
     FileText,
-    CheckCircle
+    CheckCircle,
+    AlertCircle,
+    FileWarning,
+    Briefcase
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function ChairpersonDashboard({ user, onLogout }) {
-    // Tabs: 'voting', 'finance', 'members', 'settings', 'register'
+    // Main Tabs
     const [activeTab, setActiveTab] = useState('finance'); 
     
+    // Finance Sub-Tabs
+    const [financeSubTab, setFinanceSubTab] = useState('overview');
+
     // Data State
     const [agenda, setAgenda] = useState([]);
     const [deposits, setDeposits] = useState([]);
+    const [transactions, setTransactions] = useState([]); // Stores fees, fines, penalties
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
     
@@ -35,14 +42,18 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     const res = await api.get('/api/loan/chair/agenda');
                     setAgenda(res.data);
                 } else if (activeTab === 'finance') {
-                    const res = await api.get('/api/deposits/admin/all');
-                    setDeposits(res.data);
+                    // Fetch both Deposits and General Transactions
+                    const [resDeposits, resTrans] = await Promise.all([
+                        api.get('/api/deposits/admin/all'),
+                        api.get('/api/payments/admin/all')
+                    ]);
+                    setDeposits(resDeposits.data);
+                    setTransactions(resTrans.data);
                 } else if (activeTab === 'members') {
                     const res = await api.get('/api/auth/users');
                     setUsers(res.data);
                 } else if (activeTab === 'settings') {
                     const res = await api.get('/api/settings');
-                    // Filter specifically for SACCO category
                     setSaccoSettings(res.data.filter(s => s.category === 'SACCO'));
                 }
             } catch (err) {
@@ -52,8 +63,26 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         fetchData();
     }, [activeTab, refreshKey]);
 
-    // --- ACTIONS ---
+    // --- FINANCIAL CALCULATIONS ---
+    const calcTotal = (type) => {
+        if (type === 'DEPOSIT') return deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+        return transactions
+            .filter(t => t.type === type)
+            .reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+    };
 
+    const stats = {
+        deposits: calcTotal('DEPOSIT'),
+        appFees: calcTotal('FEE_PAYMENT'),
+        // Assuming types 'FINE', 'PENALTY', 'LOAN_FORM' exist in your system logic or will be added
+        fines: calcTotal('FINE'),
+        penalties: calcTotal('PENALTY'),
+        loanForms: calcTotal('LOAN_FORM'),
+    };
+
+    const totalAssets = Object.values(stats).reduce((a, b) => a + b, 0);
+
+    // --- ACTIONS ---
     const openVoting = async (loanId) => {
         if (!window.confirm("Open the floor for voting?")) return;
         try {
@@ -82,10 +111,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    // Calculate Total Assets for Finance Tab
-    const totalSavings = deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
-
-    // Helper to render tabs
     const renderTabButton = (id, label, icon) => (
         <button onClick={() => setActiveTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition whitespace-nowrap ${
@@ -94,6 +119,81 @@ export default function ChairpersonDashboard({ user, onLogout }) {
             {icon} {label}
         </button>
     );
+
+    // Helper for Finance Cards
+    const FinanceCard = ({ title, amount, icon, activeId, colorClass }) => (
+        <div 
+            onClick={() => setFinanceSubTab(activeId)}
+            className={`cursor-pointer p-5 rounded-xl border transition-all duration-200 ${
+                financeSubTab === activeId 
+                ? `bg-white shadow-md border-${colorClass}-500 ring-2 ring-${colorClass}-200` 
+                : 'bg-white border-slate-100 hover:border-slate-300 hover:shadow-sm'
+            }`}
+        >
+            <div className="flex items-center justify-between mb-2">
+                <div className={`p-2 rounded-lg bg-${colorClass}-50 text-${colorClass}-600`}>{icon}</div>
+                {financeSubTab === activeId && <CheckCircle size={16} className={`text-${colorClass}-600`} />}
+            </div>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider">{title}</p>
+            <h3 className="text-xl font-bold text-slate-800 mt-1">KES {amount.toLocaleString()}</h3>
+        </div>
+    );
+
+    // Helper to render table rows based on selected sub-tab
+    const renderFinanceTableRows = () => {
+        let data = [];
+        let typeLabel = '';
+
+        switch(financeSubTab) {
+            case 'deposits':
+                data = deposits;
+                typeLabel = 'DEPOSIT';
+                break;
+            case 'app_fees':
+                data = transactions.filter(t => t.type === 'FEE_PAYMENT');
+                typeLabel = 'APP FEE';
+                break;
+            case 'fines':
+                data = transactions.filter(t => t.type === 'FINE');
+                typeLabel = 'FINE';
+                break;
+            case 'penalties':
+                data = transactions.filter(t => t.type === 'PENALTY');
+                typeLabel = 'PENALTY';
+                break;
+            case 'loan_forms':
+                data = transactions.filter(t => t.type === 'LOAN_FORM');
+                typeLabel = 'FORM FEE';
+                break;
+            default: // overview shows recent mixed
+                const recentDeps = deposits.slice(0, 5).map(d => ({...d, type: 'DEPOSIT'}));
+                const recentTrans = transactions.slice(0, 5);
+                data = [...recentDeps, ...recentTrans].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+                typeLabel = 'MIXED';
+        }
+
+        if (data.length === 0) {
+            return <tr><td colSpan="4" className="p-8 text-center text-slate-400">No records found for this category.</td></tr>;
+        }
+
+        return data.map((item, idx) => (
+            <tr key={item.id || idx} className="hover:bg-slate-50 transition">
+                <td className="px-6 py-4 font-medium text-slate-900">{item.full_name}</td>
+                <td className="px-6 py-4">
+                    <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold">
+                        {item.type || typeLabel}
+                    </span>
+                </td>
+                <td className="px-6 py-4 font-mono text-slate-700 font-bold">
+                    KES {parseFloat(item.amount).toLocaleString()}
+                </td>
+                <td className="px-6 py-4 text-xs text-slate-400">
+                    {item.transaction_ref || item.reference_code} <br/>
+                    {new Date(item.created_at).toLocaleDateString()}
+                </td>
+            </tr>
+        ));
+    };
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
@@ -114,7 +214,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             {renderTabButton('voting', 'Voting', <Gavel size={16}/>)}
                             {renderTabButton('finance', 'Finance', <TrendingUp size={16}/>)}
                             {renderTabButton('members', 'Directory', <Users size={16}/>)}
-                            {renderTabButton('settings', 'Sacco Policies', <Settings size={16}/>)}
+                            {renderTabButton('settings', 'Policies', <Settings size={16}/>)}
                             {renderTabButton('register', 'Add Member', <UserPlus size={16}/>)}
                         </div>
                     </div>
@@ -150,34 +250,89 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. FINANCE TAB */}
+                {/* 2. FINANCE TAB (EXPANDED) */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
-                        <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-lg flex items-center justify-between">
+                        {/* Main Total Header */}
+                        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
                             <div>
-                                <p className="text-emerald-100 font-bold text-sm uppercase">Total Sacco Assets</p>
-                                <h2 className="text-3xl font-bold mt-1">KES {totalSavings.toLocaleString()}</h2>
+                                <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest">Total Sacco Assets</p>
+                                <h2 className="text-4xl font-extrabold mt-2">KES {totalAssets.toLocaleString()}</h2>
+                                <p className="text-sm text-emerald-100 mt-2 opacity-80">Consolidated balance of all accounts</p>
                             </div>
-                            <div className="bg-white/20 p-3 rounded-xl"><DollarSign size={32} /></div>
+                            <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
+                                <DollarSign size={48} className="text-emerald-100" />
+                            </div>
                         </div>
+
+                        {/* Breakdown Cards */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                            <FinanceCard 
+                                title="Deposits" 
+                                amount={stats.deposits} 
+                                icon={<TrendingUp size={20}/>} 
+                                activeId="deposits" 
+                                colorClass="emerald"
+                            />
+                            <FinanceCard 
+                                title="App Fees" 
+                                amount={stats.appFees} 
+                                icon={<Briefcase size={20}/>} 
+                                activeId="app_fees" 
+                                colorClass="blue"
+                            />
+                            <FinanceCard 
+                                title="Loan Forms" 
+                                amount={stats.loanForms} 
+                                icon={<FileText size={20}/>} 
+                                activeId="loan_forms" 
+                                colorClass="indigo"
+                            />
+                            <FinanceCard 
+                                title="Fines" 
+                                amount={stats.fines} 
+                                icon={<AlertCircle size={20}/>} 
+                                activeId="fines" 
+                                colorClass="amber"
+                            />
+                            <FinanceCard 
+                                title="Penalties" 
+                                amount={stats.penalties} 
+                                icon={<FileWarning size={20}/>} 
+                                activeId="penalties" 
+                                colorClass="red"
+                            />
+                        </div>
+
+                        {/* Detailed List */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="p-5 border-b border-slate-100 bg-slate-50/50">
-                                <h3 className="font-bold text-slate-800 flex items-center gap-2"><FileText size={16}/> Deposit History</h3>
+                            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                    <FileText size={16} className="text-slate-500"/> 
+                                    {financeSubTab === 'overview' ? 'Recent Transactions' : 
+                                     financeSubTab === 'deposits' ? 'Deposit History' :
+                                     financeSubTab === 'app_fees' ? 'Application Fees' :
+                                     financeSubTab === 'loan_forms' ? 'Loan Form Purchases' :
+                                     financeSubTab === 'fines' ? 'Fines & Citations' : 'Penalty Log'}
+                                </h3>
+                                {financeSubTab !== 'overview' && (
+                                    <button onClick={() => setFinanceSubTab('overview')} className="text-xs font-bold text-indigo-600 hover:underline">
+                                        View All
+                                    </button>
+                                )}
                             </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm text-slate-600 text-left">
-                                    <thead className="bg-slate-50 text-xs uppercase font-bold">
-                                        <tr><th className="px-6 py-3">Member</th><th className="px-6 py-3">Amount</th><th className="px-6 py-3">Date</th></tr>
+                                    <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
+                                        <tr>
+                                            <th className="px-6 py-3">Member</th>
+                                            <th className="px-6 py-3">Type</th>
+                                            <th className="px-6 py-3">Amount</th>
+                                            <th className="px-6 py-3">Reference / Date</th>
+                                        </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
-                                        {deposits.map(d => (
-                                            <tr key={d.id} className="hover:bg-slate-50">
-                                                <td className="px-6 py-3 font-medium text-slate-900">{d.full_name}</td>
-                                                <td className="px-6 py-3 font-mono text-emerald-600 font-bold">+{parseFloat(d.amount).toLocaleString()}</td>
-                                                <td className="px-6 py-3 text-xs text-slate-400">{new Date(d.created_at).toLocaleDateString()}</td>
-                                            </tr>
-                                        ))}
-                                        {deposits.length === 0 && <tr><td colSpan="3" className="p-6 text-center text-slate-400">No deposits found.</td></tr>}
+                                        {renderFinanceTableRows()}
                                     </tbody>
                                 </table>
                             </div>
@@ -185,7 +340,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. MEMBERS TAB (RESTORED) */}
+                {/* 3. MEMBERS TAB */}
                 {activeTab === 'members' && (
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100">
