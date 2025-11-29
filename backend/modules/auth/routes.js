@@ -6,8 +6,16 @@ const db = require('../../db');
 const { authenticateUser, requireRole } = require('./middleware');
 const { validate, registerSchema, loginSchema } = require('../common/validation');
 
-// REGISTER (Protected: Admin Only)
-router.post('/register', authenticateUser, requireRole('ADMIN'), validate(registerSchema), async (req, res) => {
+// REGISTER (Shared: Admin & Chairperson)
+// We use a custom middleware function here to check for either role
+router.post('/register', authenticateUser, (req, res, next) => {
+    const allowedRoles = ['ADMIN', 'CHAIRPERSON'];
+    if (allowedRoles.includes(req.user.role)) {
+        next();
+    } else {
+        res.status(403).json({ error: "Access Denied: Only Admin or Chairperson can register members." });
+    }
+}, validate(registerSchema), async (req, res) => {
     const { fullName, email, password, role, phoneNumber } = req.body;
 
     try {
@@ -28,7 +36,7 @@ router.post('/register', authenticateUser, requireRole('ADMIN'), validate(regist
         console.error(err);
         res.status(500).json({ error: "Registration failed" });
     }
-})
+});
 
 // LOGIN (Public)
 router.post('/login', validate(loginSchema), async (req, res) => {

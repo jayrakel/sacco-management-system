@@ -2,17 +2,18 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
     Users, UserPlus, Search, Shield, Settings, 
-    Save, Trash2, RefreshCw, Key
+    Save, Trash2, Key
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function AdminDashboard({ user, onLogout }) {
-    // IT Tasks: Manage Users, Register New, System Settings
+    // Added 'register' back to activeTab
     const [activeTab, setActiveTab] = useState('users');
     
     const [users, setUsers] = useState([]);
     const [settings, setSettings] = useState([]); 
     const [searchTerm, setSearchTerm] = useState('');
+    // Added registration form state
     const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -25,7 +26,8 @@ export default function AdminDashboard({ user, onLogout }) {
                     setUsers(res.data);
                 } else if (activeTab === 'settings') {
                     const res = await api.get('/api/settings');
-                    setSettings(res.data);
+                    // Admin sees ONLY 'SYSTEM' settings
+                    setSettings(res.data.filter(s => s.category === 'SYSTEM'));
                 }
             } catch (err) {
                 console.error("Fetch Error", err);
@@ -34,7 +36,7 @@ export default function AdminDashboard({ user, onLogout }) {
         fetchData();
     }, [activeTab, refreshKey]);
 
-    // --- IT ACTIONS ---
+    // --- ACTIONS ---
 
     const handleRegister = async (e) => {
         e.preventDefault();
@@ -143,10 +145,11 @@ export default function AdminDashboard({ user, onLogout }) {
                 {activeTab === 'settings' && (
                     <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Settings className="text-slate-600" /> Global Configuration</h2>
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Settings className="text-slate-600" /> Global System Configuration</h2>
                         </div>
                         <div className="divide-y divide-slate-100">
-                            {settings.map((setting) => (
+                            {settings.length === 0 ? <p className="p-8 text-center text-slate-400">No System settings found.</p> :
+                            settings.map((setting) => (
                                 <div key={setting.setting_key} className="p-6 flex justify-between items-center gap-4 hover:bg-slate-50">
                                     <div className="flex-1">
                                         <h3 className="font-bold text-slate-800 capitalize">{setting.setting_key.replace(/_/g, ' ')}</h3>
@@ -162,12 +165,11 @@ export default function AdminDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. REGISTER TAB */}
+                {/* 3. REGISTER TAB (RESTORED) */}
                 {activeTab === 'register' && (
                     <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8">
                         <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2"><UserPlus className="text-emerald-600"/> Create New Account</h2>
                         <form onSubmit={handleRegister} className="space-y-5">
-                            {/* ... Form Inputs ... */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <input required type="text" placeholder="Full Name" className="border p-3 rounded-xl w-full" value={regForm.fullName} onChange={e => setRegForm({...regForm, fullName: e.target.value})} />
                                 <input required type="tel" placeholder="Phone" className="border p-3 rounded-xl w-full" value={regForm.phoneNumber} onChange={e => setRegForm({...regForm, phoneNumber: e.target.value})} />
@@ -181,7 +183,7 @@ export default function AdminDashboard({ user, onLogout }) {
                                     <option value="SECRETARY">Secretary</option>
                                     <option value="TREASURER">Treasurer</option>
                                     <option value="CHAIRPERSON">Chairperson</option>
-                                    <option value="ADMIN">IT Admin</option>
+                                    <option value="ADMIN">System Admin</option>
                                 </select>
                             </div>
                             <button disabled={loading} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold">{loading ? 'Creating...' : 'Create Account'}</button>

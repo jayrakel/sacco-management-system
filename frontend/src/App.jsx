@@ -6,6 +6,7 @@ import SecretaryDashboard from './pages/SecretaryDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import TreasurerDashboard from './pages/TreasurerDashboard';
 import LoanOfficerDashboard from './pages/LoanOfficerDashboard';
+import ChairpersonDashboard from './pages/ChairpersonDashboard';
 
 // SECURITY SETTING: Time in milliseconds before auto-logout
 // 5 minutes * 60 seconds * 1000 milliseconds
@@ -28,6 +29,7 @@ export default function App() {
 
   const getRedirectPath = (role) => {
     if (role === 'ADMIN') return '/admin';
+    if (role === 'CHAIRPERSON') return '/chairperson';
     if (role === 'SECRETARY') return '/secretary';
     if (role === 'TREASURER') return '/treasurer';
     if (role === 'LOAN_OFFICER') return '/loan-officer';
@@ -94,6 +96,11 @@ export default function App() {
         <Route 
           path="/treasurer" 
           element={user && user.role === 'TREASURER' ? <TreasurerDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
+        />
+
+        <Route 
+          path="/chairperson" 
+          element={user && user.role === 'CHAIRPERSON' ? <ChairpersonDashboard user={user} onLogout={handleLogout} /> : <Navigate to="/" />} 
         />
         
         <Route 
