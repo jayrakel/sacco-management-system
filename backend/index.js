@@ -9,7 +9,12 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const ALLOWED_ORIGIN = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+// --- FIX: Normalize Origin (Remove trailing slash if present) ---
+const rawOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
+const ALLOWED_ORIGIN = rawOrigin.endsWith('/') ? rawOrigin.slice(0, -1) : rawOrigin;
+
+console.log(`🔒 CORS Policy Enabled for Origin: ${ALLOWED_ORIGIN}`);
 
 // 1. Security Middleware
 app.use(helmet()); 
