@@ -9,29 +9,24 @@ const { authenticateUser } = require('./middleware');
 router.post('/register', async (req, res) => {
     const { fullName, email, password, phoneNumber, role, paymentRef } = req.body;
     
-    // 1. Validation
     if (!fullName || !email || !password || !phoneNumber) {
         return res.status(400).json({ error: "All fields are required" });
     }
 
     try {
-        // 2. Check if user exists
         const userCheck = await db.query("SELECT * FROM users WHERE email = $1", [email]);
         if (userCheck.rows.length > 0) {
             return res.status(400).json({ error: "User already exists" });
         }
 
-        // 3. Hash Password
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
 
-        // 4. Insert User
         const newUser = await db.query(
             "INSERT INTO users (full_name, email, password_hash, phone_number, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, full_name, email, role",
             [fullName, email, hash, phoneNumber, role || 'MEMBER']
         );
 
-        // 5. If it's a MEMBER and they provided a payment ref, log the Registration Fee
         if ((role === 'MEMBER' || !role) && paymentRef) {
             await db.query(
                 "INSERT INTO transactions (user_id, type, amount, status, reference_code, description) VALUES ($1, 'REGISTRATION_FEE', 1500, 'COMPLETED', $2, 'Initial Registration Fee')",
@@ -59,19 +54,17 @@ router.post('/login', async (req, res) => {
         const validPass = await bcrypt.compare(password, user.password_hash);
         if (!validPass) return res.status(400).json({ error: "Invalid Credentials" });
 
-        // Generate Token
         const token = jwt.sign(
             { id: user.id, role: user.role, name: user.full_name }, 
             process.env.JWT_SECRET, 
-            { expiresIn: '8h' } // Token lasts 8 hours
+            { expiresIn: '8h' } 
         );
 
-        // --- FIX: Cross-Site Cookie Settings for Vercel/Render ---
         res.cookie('token', token, {
             httpOnly: true,
-            secure: true,       // Required for SameSite=None
-            sameSite: 'none',   // Required for Cross-Site (Vercel -> Render)
-            maxAge: 8 * 60 * 60 * 1000 // 8 hours
+            secure: true,       
+            sameSite: 'none',   
+            maxAge: 8 * 60 * 60 * 1000 
         });
 
         res.json({ 
@@ -93,7 +86,6 @@ router.post('/login', async (req, res) => {
 
 // LOGOUT
 router.post('/logout', (req, res) => {
-    // Clear with same options to ensure it's removed
     res.clearCookie('token', {
         httpOnly: true,
         secure: true,
@@ -102,7 +94,7 @@ router.post('/logout', (req, res) => {
     res.json({ message: "Logged out" });
 });
 
-// GET ALL USERS (Protected: Admin/Chair/Sec/Treas only)
+// GET ALL USERS (Protected)
 router.get('/users', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
@@ -115,39 +107,83 @@ router.get('/users', authenticateUser, async (req, res) => {
     }
 });
 
-// GET SETUP STATUS (Check if Admin exists)
+// --- FIX: UPDATED SETUP STATUS ---
 router.get('/setup-status', async (req, res) => {
     try {
-        const result = await db.query("SELECT COUNT(*) FROM users WHERE role = 'ADMIN'");
-        const count = parseInt(result.rows[0].count);
+        // 1. Get all roles currently in the system
+        const result = await db.query("SELECT DISTINCT role FROM users");
+        const existingRoles = result.rows.map(r => r.role);
+
+        // 2. Define required roles
+        const requiredRoles = ['CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER'];
         
-        // Also check if the default admin still has the default password flag
+        // 3. Find which ones are missing
+        const missingRoles = requiredRoles.filter(role => !existingRoles.includes(role));
+
+        // 4. Check Admin Status
+        const hasAdmin = existingRoles.includes('ADMIN');
         let defaultAdminUnsafe = false;
-        if (count > 0) {
+        
+        if (hasAdmin) {
             const adminRes = await db.query("SELECT must_change_password FROM users WHERE role = 'ADMIN' LIMIT 1");
-            if (adminRes.rows[0].must_change_password) defaultAdminUnsafe = true;
+            if (adminRes.rows[0] && adminRes.rows[0].must_change_password) defaultAdminUnsafe = true;
         }
 
         res.json({ 
-            isComplete: count > 0 && !defaultAdminUnsafe, 
-            hasAdmin: count > 0 
+            isComplete: missingRoles.length === 0 && hasAdmin && !defaultAdminUnsafe, 
+            hasAdmin,
+            missingRoles // Frontend needs this array
         });
     } catch (err) {
+        console.error("Setup Status Error:", err);
         res.status(500).json({ error: "Server error" });
+    }
+});
+
+// --- FIX: NEW ROUTE FOR SETUP USERS PAGE ---
+router.post('/create-key-user', authenticateUser, async (req, res) => {
+    // Only Admin can create key officers
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: "Access Denied" });
+    }
+
+    const { fullName, email, password, phoneNumber, role } = req.body;
+
+    if (!fullName || !email || !password || !phoneNumber || !role) {
+        return res.status(400).json({ error: "All fields are required" });
+    }
+
+    try {
+        // Check if user exists
+        const userCheck = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userCheck.rows.length > 0) {
+            return res.status(400).json({ error: "User already exists" });
+        }
+
+        // Hash & Insert
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(password, salt);
+
+        // Force password change for these new officers for security
+        await db.query(
+            "INSERT INTO users (full_name, email, password_hash, phone_number, role, must_change_password) VALUES ($1, $2, $3, $4, $5, TRUE)",
+            [fullName, email, hash, phoneNumber, role]
+        );
+
+        res.json({ message: `${role} created successfully` });
+
+    } catch (err) {
+        console.error("Create Key User Error:", err);
+        res.status(500).json({ error: "Failed to create user" });
     }
 });
 
 // CHANGE PASSWORD (Authenticated User)
 router.post('/change-password', authenticateUser, async (req, res) => {
-    const { newPassword } = req.body; // Removed oldPassword check for "Must Change" flow simplicity if needed, but safer to have it.
-    // NOTE: If this is the "Force Change" flow, we might not ask for Old Password if they just logged in. 
-    // However, for general security, usually we require old password. 
-    // If the frontend only sends newPassword (as seen in ChangePassword.jsx), we should adapt.
-    
+    const { newPassword } = req.body; 
     const userId = req.user.id;
 
     try {
-        // 2. Update Password
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(newPassword, salt);
 
@@ -161,9 +197,8 @@ router.post('/change-password', authenticateUser, async (req, res) => {
     }
 });
 
-// --- ADMIN UPDATE MEMBER ---
+// ADMIN UPDATE MEMBER
 router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
-    // 1. Only Admin can perform this
     if (req.user.role !== 'ADMIN') {
         return res.status(403).json({ error: "Access Denied" });
     }
@@ -172,7 +207,6 @@ router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
     const { fullName, email, phoneNumber, role, password } = req.body;
 
     try {
-        // 2. Check if updating password
         if (password && password.trim() !== "") {
             const salt = await bcrypt.genSalt(10);
             const hash = await bcrypt.hash(password, salt);
@@ -182,7 +216,6 @@ router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
                 [fullName, email, phoneNumber, role, hash, targetId]
             );
         } else {
-            // Update details without password
             await db.query(
                 `UPDATE users SET full_name = $1, email = $2, phone_number = $3, role = $4 WHERE id = $5`,
                 [fullName, email, phoneNumber, role, targetId]
