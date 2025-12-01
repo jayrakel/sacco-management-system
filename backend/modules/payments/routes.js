@@ -16,7 +16,7 @@ const recordTransactionSchema = Joi.object({
     reference: Joi.string().optional().allow('', null) 
 });
 
-// 1. PAY LOAN FORM FEE (User initiated)
+// 1. PAY LOAN FORM FEE (User initiated via Button)
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -118,7 +118,7 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// 3. RECORD MANUAL TRANSACTION (With Smart Linking & Auto-Deduct)
+// 3. RECORD MANUAL TRANSACTION (Chairperson/Admin)
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
@@ -169,10 +169,8 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
         }
 
         // --- C. SMART LINKING FOR LOAN FEES ---
-        // If Admin manually records a loan fee, automatically mark the latest FEE_PENDING loan as PAID.
+        // FIX: Now checking for 'FEE_PENDING' specifically
         if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
-            // Find the most recent FEE_PENDING loan for this user
-            // UPDATED: Changed status check from 'PENDING' to 'FEE_PENDING'
             const recentLoan = await client.query(
                 `SELECT id FROM loan_applications 
                  WHERE user_id = $1 AND status = 'FEE_PENDING' 
@@ -183,7 +181,7 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
             if (recentLoan.rows.length > 0) {
                 const loanId = recentLoan.rows[0].id;
                 
-                // This updates the loan status and saves the manual/auto reference to the loan application
+                // Update status AND save transaction reference
                 await client.query(
                     `UPDATE loan_applications 
                      SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
@@ -206,7 +204,7 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
     }
 });
 
-// 4. AUTOMATED WEEKLY COMPLIANCE CHECK (Weekly Deposit Check)
+// 4. AUTOMATED WEEKLY COMPLIANCE CHECK
 router.post('/admin/run-weekly-compliance', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
 

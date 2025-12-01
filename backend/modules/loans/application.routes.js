@@ -22,6 +22,46 @@ router.get('/status', async (req, res) => {
         
         const loan = result.rows[0];
 
+        // --- SMART FIX: AUTO-RECONCILE PAYMENTS ---
+        // If status is 'FEE_PENDING', check if a manual payment exists but wasn't linked.
+        if (loan.status === 'FEE_PENDING') {
+            const paymentCheck = await db.query(
+                `SELECT reference_code, amount 
+                 FROM transactions 
+                 WHERE user_id = $1 AND type = 'LOAN_FORM_FEE' 
+                 ORDER BY created_at DESC LIMIT 1`,
+                [req.user.id]
+            );
+
+            if (paymentCheck.rows.length > 0) {
+                const tx = paymentCheck.rows[0];
+                
+                // Verify this transaction hasn't been used by another application
+                const usageCheck = await db.query(
+                    "SELECT id FROM loan_applications WHERE fee_transaction_ref = $1", 
+                    [tx.reference_code]
+                );
+
+                if (usageCheck.rows.length === 0) {
+                    console.log(`[Auto-Fix] Linking orphan payment ${tx.reference_code} to Loan #${loan.id}`);
+                    
+                    // 1. Update the database
+                    await db.query(
+                        `UPDATE loan_applications 
+                         SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2 
+                         WHERE id=$3`,
+                        [tx.reference_code, tx.amount, loan.id]
+                    );
+
+                    // 2. Update the local object so the User sees the fix immediately
+                    loan.status = 'FEE_PAID';
+                    loan.fee_transaction_ref = tx.reference_code;
+                    loan.fee_amount = parseFloat(tx.amount);
+                }
+            }
+        }
+        // -------------------------------------------
+
         // Parse Numbers to ensure math works
         loan.amount_requested = parseFloat(loan.amount_requested || 0);
         loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
