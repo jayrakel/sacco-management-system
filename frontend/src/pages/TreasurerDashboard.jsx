@@ -1,3 +1,4 @@
+// frontend/src/pages/TreasurerDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
@@ -11,14 +12,14 @@ import {
     FileWarning,
     Briefcase,
     DollarSign,
-    ArrowUpCircle,
-    ArrowDownCircle
+    Users,
+    Clock
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function TreasurerDashboard({ user, onLogout }) {
     // Main Tabs: 'queue' (Disbursements) or 'finance' (Records)
-    const [activeTab, setActiveTab] = useState('finance'); 
+    const [activeTab, setActiveTab] = useState('queue'); 
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
     // Data State
@@ -43,24 +44,23 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 setQueue(qRes.data);
                 setStats(sRes.data);
 
-                // 2. Fetch Full Financial History (Transactions & Deposits)
-                // We fetch this for the detailed breakdown cards similar to Chairperson
-                if (activeTab === 'finance') {
-                    const [resDeposits, resTrans] = await Promise.all([
-                        api.get('/api/deposits/admin/all'),
-                        api.get('/api/payments/admin/all')
-                    ]);
-                    setDeposits(resDeposits.data || []);
-                    setTransactions(resTrans.data || []);
-                }
+                // 2. Fetch Full Financial History
+                // Always fetching this to ensure data is ready when switching tabs
+                const [resDeposits, resTrans] = await Promise.all([
+                    api.get('/api/deposits/admin/all'),
+                    api.get('/api/payments/admin/all')
+                ]);
+                setDeposits(resDeposits.data || []);
+                setTransactions(resTrans.data || []);
+                
             } catch (err) {
                 console.error("Error loading treasury data", err);
             }
         };
         fetchData();
-    }, [refreshKey, activeTab]);
+    }, [refreshKey]);
 
-    // --- ROBUST CALCULATIONS (Matched to Chairperson Logic) ---
+    // --- CALCULATIONS FOR FINANCE TAB (Restored Original Logic) ---
     const safeSum = (arr) => {
         if (!Array.isArray(arr)) return 0;
         return arr.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
@@ -90,7 +90,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         loanForms: sumLoanForms(),
         fines: sumByType('FINE'),
         penalties: sumByType('PENALTY'),
-        disbursements: sumByType('LOAN_DISBURSEMENT') // Track Outflows too
+        disbursements: sumByType('LOAN_DISBURSEMENT')
     };
 
     // --- ACTIONS ---
@@ -112,7 +112,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    // Helper Component for Cards
+    // --- HELPER COMPONENT (Restored) ---
     const FinanceCard = ({ title, amount, icon, activeId, colorClass }) => (
         <div 
             onClick={() => setFinanceSubTab(activeId)}
@@ -131,7 +131,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         </div>
     );
 
-    // Render Table Rows
+    // --- TABLE ROWS RENDERER (Restored) ---
     const renderFinanceTableRows = () => {
         let data = [];
         let typeLabel = '';
@@ -162,7 +162,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 typeLabel = 'OUTFLOW';
                 break;
             default: // overview
-                // Combine recent deposits and transactions
                 const recentDeps = deposits.slice(0, 10).map(d => ({...d, type: 'DEPOSIT'}));
                 const recentTrans = transactions.slice(0, 15);
                 data = [...recentDeps, ...recentTrans].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
@@ -199,6 +198,10 @@ export default function TreasurerDashboard({ user, onLogout }) {
         ));
     };
 
+    // Queue Calculations for Redesigned Tab
+    const totalPendingPayouts = queue.reduce((acc, item) => acc + parseFloat(item.amount_requested), 0);
+    const liquidityStatus = stats.availableFunds >= totalPendingPayouts ? 'healthy' : 'critical';
+
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
             <DashboardHeader user={user} onLogout={onLogout} title="Treasury Panel" />
@@ -210,81 +213,134 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex gap-2">
                         <button 
                             onClick={() => setActiveTab('queue')} 
-                            className={`px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'queue' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'queue' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            Disbursement Queue {queue.length > 0 && <span className="ml-2 bg-white/20 px-1.5 rounded text-xs">{queue.length}</span>}
+                            Disbursement Queue {queue.length > 0 && <span className="ml-1 bg-white/20 px-1.5 rounded text-xs">{queue.length}</span>}
                         </button>
                         <button 
                             onClick={() => setActiveTab('finance')} 
-                            className={`px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'finance' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'finance' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            Financial Overview
+                            Financial Records
                         </button>
                     </div>
                 </div>
 
-                {/* 1. DISBURSEMENT QUEUE */}
+                {/* 1. REDESIGNED DISBURSEMENT QUEUE */}
                 {activeTab === 'queue' && (
-                    <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
-                        {/* Stats Header for Queue */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                             <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-lg relative overflow-hidden">
+                    <div className="space-y-6 animate-fade-in">
+                        {/* Queue Stats Cards */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {/* Available Funds */}
+                            <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-lg relative overflow-hidden">
                                 <div className="relative z-10">
                                     <div className="flex items-center gap-2 mb-2 opacity-90">
-                                        <Wallet size={20} /> <span className="text-sm font-bold uppercase">Net Liquidity</span>
+                                        <Wallet size={20} /> <span className="text-sm font-bold uppercase tracking-wider">Liquidity</span>
                                     </div>
-                                    <div className="text-3xl font-bold">KES {stats.availableFunds.toLocaleString()}</div>
-                                    <p className="text-emerald-100 text-xs mt-1 opacity-80">Available for disbursement</p>
+                                    <div className="text-3xl font-extrabold">KES {stats.availableFunds.toLocaleString()}</div>
+                                    <p className="text-emerald-100 text-xs mt-2 opacity-80">Available cash for lending</p>
                                 </div>
-                                <PieChart className="absolute -right-4 -bottom-4 text-emerald-500 opacity-30" size={100} />
+                                <DollarSign size={80} className="absolute -right-4 -bottom-4 text-emerald-500 opacity-30" />
                             </div>
-                            <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col justify-center shadow-sm">
-                                <p className="text-slate-500 font-bold text-sm uppercase mb-1">Total Disbursed to Date</p>
-                                <div className="text-3xl font-bold text-indigo-900">KES {stats.totalDisbursed.toLocaleString()}</div>
+
+                            {/* Pending Payouts */}
+                            <div className={`rounded-2xl p-6 shadow-lg border relative overflow-hidden ${liquidityStatus === 'healthy' ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
+                                <div className="relative z-10">
+                                    <div className="flex items-center gap-2 mb-2 text-slate-500">
+                                        <Clock size={20} /> <span className="text-sm font-bold uppercase tracking-wider">Pending Payouts</span>
+                                    </div>
+                                    <div className={`text-3xl font-extrabold ${liquidityStatus === 'healthy' ? 'text-slate-800' : 'text-red-600'}`}>
+                                        KES {totalPendingPayouts.toLocaleString()}
+                                    </div>
+                                    {liquidityStatus === 'critical' && (
+                                        <p className="text-red-500 text-xs mt-2 font-bold flex items-center gap-1">
+                                            <AlertCircle size={12} /> Liquidity Low! Cannot clear queue.
+                                        </p>
+                                    )}
+                                    {liquidityStatus === 'healthy' && (
+                                        <p className="text-slate-400 text-xs mt-2">Total approved awaiting transfer</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Total Disbursed */}
+                            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-center">
+                                <div className="flex items-center gap-2 mb-2 text-indigo-600">
+                                    <Send size={20} /> <span className="text-sm font-bold uppercase tracking-wider">Total Disbursed</span>
+                                </div>
+                                <div className="text-3xl font-extrabold text-slate-800">KES {stats.totalDisbursed.toLocaleString()}</div>
+                                <p className="text-slate-400 text-xs mt-2">Lifetime disbursements</p>
                             </div>
                         </div>
 
+                        {/* Queue Table */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    <Send className="text-indigo-600" /> Pending Disbursements
+                            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Users size={18} className="text-slate-500" /> 
+                                    Approved Loans ({queue.length})
                                 </h2>
                             </div>
+
                             {queue.length === 0 ? (
                                 <div className="p-12 text-center text-slate-400">
                                     <CheckCircle size={48} className="mx-auto mb-4 opacity-50"/>
                                     <p>All approved loans have been processed.</p>
                                 </div>
                             ) : (
-                                <div className="divide-y divide-slate-100">
-                                    {queue.map(item => (
-                                        <div key={item.id} className="p-6 flex flex-col md:flex-row justify-between gap-6 items-center hover:bg-slate-50 transition">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-3 mb-1">
-                                                    <div className="bg-indigo-100 text-indigo-700 font-bold px-2 py-1 rounded text-xs">#{item.id}</div>
-                                                    <h3 className="text-lg font-bold text-slate-800">{item.full_name}</h3>
-                                                </div>
-                                                <p className="text-sm text-slate-500">
-                                                    Amount: <span className="font-bold text-slate-900">KES {parseFloat(item.amount_requested).toLocaleString()}</span>
-                                                </p>
-                                                <p className="text-xs text-slate-400 mt-1 italic">"{item.purpose}"</p>
-                                            </div>
-                                            <button 
-                                                onClick={() => handleDisburse(item.id, parseFloat(item.amount_requested))} 
-                                                disabled={loading} 
-                                                className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-indigo-700 transition shadow-lg flex items-center gap-2"
-                                            >
-                                                <Send size={16}/> Disburse Funds
-                                            </button>
-                                        </div>
-                                    ))}
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                            <tr>
+                                                <th className="px-6 py-3">Member</th>
+                                                <th className="px-6 py-3">Amount</th>
+                                                <th className="px-6 py-3">Purpose</th>
+                                                <th className="px-6 py-3">Approved On</th>
+                                                <th className="px-6 py-3 text-right">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {queue.map(item => (
+                                                <tr key={item.id} className="hover:bg-slate-50 transition">
+                                                    <td className="px-6 py-4">
+                                                        <div className="font-bold text-slate-800">{item.full_name}</div>
+                                                        <div className="text-xs text-slate-400">{item.phone_number}</div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded">
+                                                            KES {parseFloat(item.amount_requested).toLocaleString()}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-slate-600 max-w-xs truncate">
+                                                        {item.purpose}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-slate-500 text-xs">
+                                                        {item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '-'}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <button 
+                                                            onClick={() => handleDisburse(item.id, parseFloat(item.amount_requested))} 
+                                                            disabled={loading || stats.availableFunds < parseFloat(item.amount_requested)} 
+                                                            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs shadow-sm transition ${
+                                                                loading || stats.availableFunds < parseFloat(item.amount_requested)
+                                                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                                                : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                                            }`}
+                                                        >
+                                                            <Send size={14}/> Disburse
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
                                 </div>
                             )}
                         </div>
                     </div>
                 )}
 
-                {/* 2. FINANCIAL OVERVIEW (Redesigned) */}
+                {/* 2. ORIGINAL FINANCIAL OVERVIEW (Restored) */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
                         
@@ -296,7 +352,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                 <p className="text-sm text-indigo-200 mt-2 opacity-80">Consolidated balance of all inflows</p>
                             </div>
                             <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
-                                <DollarSign size={48} className="text-indigo-100" />
+                                <TrendingUp size={48} className="text-indigo-100" />
                             </div>
                         </div>
 

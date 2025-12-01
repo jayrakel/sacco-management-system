@@ -1,19 +1,18 @@
+// backend/modules/deposits/routes.js
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-const { authenticateUser, requireRole } = require('../auth/middleware');
+const { authenticateUser } = require('../auth/middleware');
 const Joi = require('joi');
 
-// Validation Schema for Deposit
 const depositSchema = Joi.object({
     amount: Joi.number().integer().min(50).required(),
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required()
 });
 
-// --- NEW ROUTE START ---
-// GET ALL DEPOSITS (Admin & Chairperson)
+// --- FIX: Added 'TREASURER' to allowed roles ---
 router.get('/admin/all', authenticateUser, (req, res, next) => {
-    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next(); // <--- MUST INCLUDE CHAIRPERSON
+    if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next(); 
     else res.status(403).json({ error: "Access Denied" });
 }, async (req, res) => {
     try {
@@ -26,9 +25,8 @@ router.get('/admin/all', authenticateUser, (req, res, next) => {
         res.json(result.rows);
     } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
 });
-// --- NEW ROUTE END ---
 
-// 1. GET MY SAVINGS BALANCE
+// ... (Rest of the file remains unchanged: /balance, /, /history) ...
 router.get('/balance', authenticateUser, async (req, res) => {
     try {
         const result = await db.query(
@@ -43,12 +41,11 @@ router.get('/balance', authenticateUser, async (req, res) => {
     }
 });
 
-// 2. MAKE A DEPOSIT
 router.post('/', authenticateUser, async (req, res) => {
     const { error } = depositSchema.validate(req.body);
     if (error) return res.status(400).json({ error: error.details[0].message });
 
-    const { amount, transactionRef } = req.body; // Assuming mocked ref or from body
+    const { amount, transactionRef } = req.body; 
     const ref = transactionRef || 'TRX-' + Math.random().toString(36).substr(2, 9).toUpperCase();
 
     try {
@@ -69,7 +66,6 @@ router.post('/', authenticateUser, async (req, res) => {
     }
 });
 
-// 3. GET MY TRANSACTION HISTORY
 router.get('/history', authenticateUser, async (req, res) => {
     try {
         const result = await db.query(
