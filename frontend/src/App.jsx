@@ -37,6 +37,35 @@ export default function App() {
     localStorage.removeItem('token');
   }, []);
 
+  // --- NEW: Dynamic Branding (Favicon & Title) ---
+  useEffect(() => {
+    const fetchBranding = async () => {
+      try {
+        const res = await api.get('/api/settings/branding');
+        const settings = res.data || [];
+
+        // 1. Set Page Title (Sacco Name)
+        const nameSetting = settings.find(s => s.setting_key === 'sacco_name');
+        if (nameSetting && nameSetting.setting_value) {
+          document.title = nameSetting.setting_value;
+        }
+
+        // 2. Set Favicon
+        const favSetting = settings.find(s => s.setting_key === 'sacco_favicon');
+        if (favSetting && favSetting.setting_value) {
+          const link = document.querySelector("link[rel~='icon']") || document.createElement('link');
+          link.type = 'image/png'; // Or detect type if needed
+          link.rel = 'icon';
+          link.href = favSetting.setting_value;
+          document.getElementsByTagName('head')[0].appendChild(link);
+        }
+      } catch (err) {
+        console.warn("Branding sync failed", err);
+      }
+    };
+    fetchBranding();
+  }, []);
+
   // Inactivity Timer
   useEffect(() => {
     if (!user) return;

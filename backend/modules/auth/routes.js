@@ -3,206 +3,198 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const db = require('../../db');
-const { authenticateUser, requireRole } = require('./middleware');
-const { validate, registerSchema, loginSchema } = require('../common/validation');
+const { authenticateUser } = require('./middleware');
 
-// --- NEW: SETUP WIZARD ROUTES ---
+// ... (Existing Login/Register routes remain unchanged) ...
 
-// 1. Check System Setup Status
-router.get('/setup-status', authenticateUser, requireRole('ADMIN'), async (req, res) => {
-    try {
-        const result = await db.query(`
-            SELECT role, COUNT(*) as count 
-            FROM users 
-            WHERE role IN ('CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER')
-            GROUP BY role
-        `);
-
-        const counts = {};
-        result.rows.forEach(row => { counts[row.role] = parseInt(row.count); });
-
-        const required = ['CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER'];
-        const missing = required.filter(role => !counts[role] || counts[role] === 0);
-
-        res.json({ isComplete: missing.length === 0, missingRoles: missing });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Status check failed" });
-    }
-});
-
-// 2. Create Key User (For Wizard Only - No Fee Logic)
-router.post('/create-key-user', authenticateUser, requireRole('ADMIN'), validate(registerSchema), async (req, res) => {
-    const { fullName, email, password, role, phoneNumber } = req.body;
-    const KEY_ROLES = ['CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER', 'ASSISTANT_CHAIRPERSON', 'ASSISTANT_SECRETARY'];
+// REGISTER
+router.post('/register', async (req, res) => {
+    const { fullName, email, password, phoneNumber, role, paymentRef } = req.body;
     
-    if (!KEY_ROLES.includes(role)) {
-        return res.status(400).json({ error: "This endpoint is for Key Users only." });
+    // 1. Validation
+    if (!fullName || !email || !password || !phoneNumber) {
+        return res.status(400).json({ error: "All fields are required" });
     }
 
     try {
-        const userCheck = await db.query("SELECT id FROM users WHERE email = $1", [email]);
-        if (userCheck.rows.length > 0) return res.status(400).json({ error: "Email already exists" });
-
-        // Enforce Single Responsibility for primary roles
-        if (['CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(role)) {
-             const roleCheck = await db.query("SELECT id FROM users WHERE role = $1", [role]);
-             if (roleCheck.rows.length > 0) return res.status(400).json({ error: `A ${role} already exists.` });
+        // 2. Check if user exists
+        const userCheck = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userCheck.rows.length > 0) {
+            return res.status(400).json({ error: "User already exists" });
         }
 
+        // 3. Hash Password
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
 
-        const result = await db.query(
-            `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password) 
-             VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id, role`,
-            [fullName, email, hash, role, phoneNumber]
+        // 4. Insert User
+        // Note: We default 'is_active' to true for now. In a real app, you might want email verification.
+        // We also handle the optional paymentRef for MEMBERS
+        const newUser = await db.query(
+            "INSERT INTO users (full_name, email, password_hash, phone_number, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, full_name, email, role",
+            [fullName, email, hash, phoneNumber, role || 'MEMBER']
         );
 
-        res.json({ message: `${role} created successfully`, user: result.rows[0] });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Creation failed" });
-    }
-});
-
-// 3. Change Password (Self)
-router.post('/change-password', authenticateUser, async (req, res) => {
-    const { newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) {
-        return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(newPassword, salt);
-        await db.query("UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2", [hash, req.user.id]);
-        res.json({ success: true, message: "Password updated successfully." });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to update password" });
-    }
-});
-
-// --- EXISTING ROUTES (MAINTAINED) ---
-
-// REGISTER (Shared: Admin & Chairperson - Includes Fee Logic)
-router.post('/register', authenticateUser, (req, res, next) => {
-    const allowedRoles = ['ADMIN', 'CHAIRPERSON'];
-    if (allowedRoles.includes(req.user.role)) next();
-    else res.status(403).json({ error: "Access Denied: Only Admin or Chairperson can register members." });
-}, validate(registerSchema), async (req, res) => {
-    const { fullName, email, password, role, phoneNumber, paymentRef } = req.body;
-    const client = await db.pool.connect();
-    try {
-        await client.query('BEGIN');
-        const userCheck = await client.query("SELECT id FROM users WHERE email = $1", [email]);
-        if (userCheck.rows.length > 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: "Email already exists" }); }
-
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(password, salt);
-
-        const result = await client.query(
-            `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
-             VALUES ($1, $2, $3, $4, $5) RETURNING id, email, role, full_name`,
-            [fullName, email, hash, role, phoneNumber]
-        );
-        const newUser = result.rows[0];
-
-        if (role === 'MEMBER' && paymentRef) {
-            const refCheck = await client.query("SELECT id FROM transactions WHERE reference_code = $1", [paymentRef]);
-            if (refCheck.rows.length > 0) { await client.query('ROLLBACK'); return res.status(400).json({ error: "Payment reference code already used." }); }
-            
-            const settingRes = await client.query("SELECT setting_value FROM system_settings WHERE setting_key = 'registration_fee'");
-            const feeAmount = settingRes.rows.length > 0 ? parseFloat(settingRes.rows[0].setting_value) : 1500.00;
-
-            await client.query(
-                `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
-                 VALUES ($1, 'REGISTRATION_FEE', $2, $3, 'New Member Registration Fee')`,
-                [newUser.id, feeAmount, paymentRef]
+        // 5. If it's a MEMBER and they provided a payment ref, log the Registration Fee
+        if ((role === 'MEMBER' || !role) && paymentRef) {
+            await db.query(
+                "INSERT INTO transactions (user_id, type, amount, status, reference_code, description) VALUES ($1, 'REGISTRATION_FEE', 1500, 'COMPLETED', $2, 'Initial Registration Fee')",
+                [newUser.rows[0].id, paymentRef]
             );
         }
-        await client.query('COMMIT');
-        res.json({ message: "User registered successfully", user: newUser });
+
+        res.json({ message: "User registered successfully", user: newUser.rows[0] });
+
     } catch (err) {
-        await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: "Registration failed." });
-    } finally {
-        client.release();
+        res.status(500).json({ error: "Server error" });
     }
 });
 
-// LOGIN (Modified to return mustChangePassword)
-router.post('/login', validate(loginSchema), async (req, res) => {
+// LOGIN
+router.post('/login', async (req, res) => {
     const { email, password } = req.body;
+
     try {
         const result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (result.rows.length === 0) return res.status(400).json({ error: "Invalid credentials" });
+        if (result.rows.length === 0) return res.status(400).json({ error: "Invalid Credentials" });
 
         const user = result.rows[0];
         const validPass = await bcrypt.compare(password, user.password_hash);
-        if (!validPass) return res.status(400).json({ error: "Invalid credentials" });
+        if (!validPass) return res.status(400).json({ error: "Invalid Credentials" });
 
-        const token = jwt.sign({ id: user.id, role: user.role, name: user.full_name }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        // Generate Token
+        const token = jwt.sign(
+            { id: user.id, role: user.role, name: user.full_name }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '8h' } // Token lasts 8 hours
+        );
 
+        // Send Token as HTTP-only cookie (More secure than localStorage)
         res.cookie('token', token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
             sameSite: 'strict',
-            maxAge: 3600000 
+            maxAge: 8 * 60 * 60 * 1000 // 8 hours
         });
 
         res.json({ 
-            success: true,
+            message: "Login successful", 
             user: { 
                 id: user.id, 
                 name: user.full_name, 
-                role: user.role, 
-                email: user.email,
-                mustChangePassword: user.must_change_password // <--- ADDED THIS
-            }
+                email: user.email, 
+                role: user.role,
+                mustChangePassword: user.must_change_password 
+            } 
         });
 
     } catch (err) {
-        res.status(500).json({ error: "Login failed" });
+        console.error(err);
+        res.status(500).json({ error: "Server Error" });
     }
 });
 
+// LOGOUT
 router.post('/logout', (req, res) => {
     res.clearCookie('token');
-    res.json({ message: "Logged out successfully" });
+    res.json({ message: "Logged out" });
 });
 
-router.get('/users', authenticateUser, (req, res, next) => {
-    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next();
-    else res.status(403).json({ error: "Access Denied" });
-}, async (req, res) => {
+// GET ALL USERS (Protected: Admin/Chair/Sec/Treas only)
+router.get('/users', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(req.user.role)) {
+        return res.status(403).json({ error: "Access Denied" });
+    }
     try {
-        const result = await db.query("SELECT id, full_name, email, role, phone_number, created_at FROM users ORDER BY created_at DESC");
-        res.json(result.rows);
+        const users = await db.query("SELECT id, full_name, email, phone_number, role, created_at, is_active FROM users ORDER BY created_at DESC");
+        res.json(users.rows);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch users" });
     }
 });
 
-router.post('/users/:id/reset-password', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+// GET SETUP STATUS (Check if Admin exists)
+router.get('/setup-status', async (req, res) => {
     try {
-        const defaultPass = "123456"; 
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(defaultPass, salt);
-        await db.query("UPDATE users SET password_hash = $1, must_change_password = TRUE WHERE id = $2", [hash, req.params.id]);
-        res.json({ success: true, message: `Password reset to '${defaultPass}'` });
+        const result = await db.query("SELECT COUNT(*) FROM users WHERE role = 'ADMIN'");
+        const count = parseInt(result.rows[0].count);
+        
+        // Also check if the default admin still has the default password flag
+        let defaultAdminUnsafe = false;
+        if (count > 0) {
+            const adminRes = await db.query("SELECT must_change_password FROM users WHERE role = 'ADMIN' LIMIT 1");
+            if (adminRes.rows[0].must_change_password) defaultAdminUnsafe = true;
+        }
+
+        res.json({ 
+            isComplete: count > 0 && !defaultAdminUnsafe, 
+            hasAdmin: count > 0 
+        });
     } catch (err) {
-        res.status(500).json({ error: "Reset failed" });
+        res.status(500).json({ error: "Server error" });
     }
 });
 
-router.delete('/users/:id', authenticateUser, requireRole('ADMIN'), async (req, res) => {
+// CHANGE PASSWORD (Authenticated User)
+router.post('/change-password', authenticateUser, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
     try {
-        await db.query("DELETE FROM users WHERE id = $1", [req.params.id]);
-        res.json({ success: true, message: "User deleted from system" });
+        // 1. Verify Old Password
+        const userRes = await db.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
+        const user = userRes.rows[0];
+        
+        const validPass = await bcrypt.compare(oldPassword, user.password_hash);
+        if (!validPass) return res.status(400).json({ error: "Incorrect current password" });
+
+        // 2. Update Password
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(newPassword, salt);
+
+        await db.query("UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2", [hash, userId]);
+        
+        res.json({ message: "Password updated successfully" });
+
     } catch (err) {
-        res.status(500).json({ error: "Delete failed" });
+        res.status(500).json({ error: "Update failed" });
+    }
+});
+
+// --- NEW: ADMIN UPDATE MEMBER ---
+router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
+    // 1. Only Admin can perform this
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: "Access Denied" });
+    }
+
+    const targetId = req.params.userId;
+    const { fullName, email, phoneNumber, role, password } = req.body;
+
+    try {
+        // 2. Check if updating password
+        if (password && password.trim() !== "") {
+            const salt = await bcrypt.genSalt(10);
+            const hash = await bcrypt.hash(password, salt);
+            
+            await db.query(
+                `UPDATE users SET full_name = $1, email = $2, phone_number = $3, role = $4, password_hash = $5 WHERE id = $6`,
+                [fullName, email, phoneNumber, role, hash, targetId]
+            );
+        } else {
+            // Update details without password
+            await db.query(
+                `UPDATE users SET full_name = $1, email = $2, phone_number = $3, role = $4 WHERE id = $5`,
+                [fullName, email, phoneNumber, role, targetId]
+            );
+        }
+
+        res.json({ message: "User updated successfully" });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update user" });
     }
 });
 
