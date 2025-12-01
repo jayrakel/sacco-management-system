@@ -42,7 +42,6 @@ const loanRoutes = require('./modules/loans');
 const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
 const settingsModule = require('./modules/settings/routes');
-// --- NEW: Import Reports ---
 const reportRoutes = require('./modules/reports/routes'); 
 
 // --- ROUTES ---
@@ -51,7 +50,6 @@ app.use('/api/loan', apiLimiter, loanRoutes);
 app.use('/api/payments', apiLimiter, paymentRoutes); 
 app.use('/api/deposits', apiLimiter, depositRoutes);
 app.use('/api/settings', settingsModule.router); 
-// --- NEW: Use Reports ---
 app.use('/api/reports', apiLimiter, reportRoutes);
 
 // --- ERROR HANDLING ---
@@ -72,12 +70,14 @@ const initializeSystem = async () => {
             const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
             if (adminPassword) {
                 const hash = await bcrypt.hash(adminPassword, 10);
+                
+                // UPDATED: Set 'must_change_password' to true for the first admin
                 await db.query(
-                    `INSERT INTO users (full_name, email, password_hash, role, phone_number) 
-                     VALUES ($1, $2, $3, $4, $5)`,
-                    ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000']
+                    `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password) 
+                     VALUES ($1, $2, $3, $4, $5, $6)`,
+                    ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000', true]
                 );
-                console.log("✅ DEFAULT ADMIN CREATED");
+                console.log("✅ DEFAULT ADMIN CREATED (Password Change Required)");
             }
         }
     } catch (err) {

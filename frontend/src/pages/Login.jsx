@@ -1,45 +1,55 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import api from '../api'; 
-import { ShieldCheck, Lock, Mail, ChevronRight } from 'lucide-react';
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../api";
+import { ShieldCheck, Lock, Mail, ChevronRight } from "lucide-react";
 
 export default function Login({ setUser }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
-    
+    setError("");
+
     try {
-      const res = await api.post('/api/auth/login', { email, password });
-      
+      const res = await api.post("/api/auth/login", { email, password });
       const { user } = res.data;
-      
-      localStorage.setItem('user', JSON.stringify(user));
+
+      localStorage.setItem("user", JSON.stringify(user));
       setUser(user);
 
-      // SECURITY UPGRADE:
-      // Instead of exposing roles in the URL (e.g. /admin, /member),
-      // we redirect everyone to the unified Dashboard Hub.
-      navigate('/dashboard'); 
-      
+      // --- INTEGRATION: Force Password Change ---
+      if (user.mustChangePassword) {
+        navigate("/change-password");
+        return;
+      }
+      // ------------------------------------------
+
+      const paths = {
+        ADMIN: "/admin",
+        SECRETARY: "/secretary",
+        MEMBER: "/member",
+        TREASURER: "/treasurer",
+        CHAIRPERSON: "/chairperson" // Added chairperson support
+      };
+      navigate(paths[user.role] || "/member");
+
     } catch (err) {
       console.error("Login Error:", err);
-      setError(err.response?.data?.error || "Connection failed. Please check your server.");
+      setError(err.response?.data?.error || "Connection failed.");
     }
     setLoading(false);
   };
 
+  // ... (Rest of the UI remains exactly the same) ...
   return (
     <div className="min-h-screen flex bg-slate-50 font-sans">
-      {/* ... (UI code remains exactly the same as provided) ... */}
+      {/* Left Side - Branding */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 flex-col justify-center items-center p-12 text-white relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-full bg-[url('https://images.unsplash.com/photo-1565514020176-8c2777e02a76?q=80&w=1000&auto=format&fit=crop')] opacity-10 bg-cover bg-center"></div>
         <div className="relative z-10 text-center">
           <div className="bg-emerald-500/20 p-6 rounded-full inline-block mb-8 backdrop-blur-sm">
             <ShieldCheck size={64} className="text-emerald-400" />
@@ -51,6 +61,7 @@ export default function Login({ setUser }) {
         </div>
       </div>
 
+      {/* Right Side - Login Form */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="bg-white p-10 rounded-2xl shadow-xl border border-slate-100">
@@ -68,11 +79,11 @@ export default function Login({ setUser }) {
                 <label className="text-sm font-semibold text-slate-700">Email Address</label>
                 <div className="relative">
                   <Mail className="absolute left-4 top-3.5 text-slate-400" size={20} />
-                  <input 
-                    type="email" required 
+                  <input
+                    type="email" required
                     className="w-full border border-slate-200 pl-12 pr-4 py-3 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all bg-slate-50 focus:bg-white"
                     placeholder="name@sacco.com"
-                    value={email} onChange={e => setEmail(e.target.value)}
+                    value={email} onChange={(e) => setEmail(e.target.value)}
                   />
                 </div>
               </div>
@@ -81,17 +92,17 @@ export default function Login({ setUser }) {
                 <label className="text-sm font-semibold text-slate-700">Password</label>
                 <div className="relative">
                   <Lock className="absolute left-4 top-3.5 text-slate-400" size={20} />
-                  <input 
-                    type="password" required 
+                  <input
+                    type="password" required
                     className="w-full border border-slate-200 pl-12 pr-4 py-3 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all bg-slate-50 focus:bg-white"
                     placeholder="••••••••"
-                    value={password} onChange={e => setPassword(e.target.value)}
+                    value={password} onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
               </div>
 
               <button disabled={loading} className="w-full bg-slate-900 hover:bg-emerald-600 text-white font-bold py-4 rounded-lg transition-all duration-200 flex items-center justify-center gap-2 group">
-                {loading ? 'Verifying...' : <>Sign In <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" /></>}
+                {loading ? "Verifying..." : <>Sign In <ChevronRight size={20} className="group-hover:translate-x-1 transition-transform" /></>}
               </button>
             </form>
           </div>
