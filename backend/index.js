@@ -38,23 +38,21 @@ const apiLimiter = rateLimit({
 
 // --- MODULES ---
 const authRoutes = require('./modules/auth/routes');
-// Load the new modularized loan routes (looks for index.js in the folder)
 const loanRoutes = require('./modules/loans'); 
 const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
 const settingsModule = require('./modules/settings/routes');
+// --- NEW: Import Reports ---
+const reportRoutes = require('./modules/reports/routes'); 
 
 // --- ROUTES ---
 app.use('/api/auth', loginLimiter, authRoutes); 
 app.use('/api/loan', apiLimiter, loanRoutes); 
-
-// ---------------------------------------------------------
-// FIX IS HERE: Changed '/api/payment' to '/api/payments'
-// ---------------------------------------------------------
 app.use('/api/payments', apiLimiter, paymentRoutes); 
-
 app.use('/api/deposits', apiLimiter, depositRoutes);
 app.use('/api/settings', settingsModule.router); 
+// --- NEW: Use Reports ---
+app.use('/api/reports', apiLimiter, reportRoutes);
 
 // --- ERROR HANDLING ---
 app.use((err, req, res, next) => {

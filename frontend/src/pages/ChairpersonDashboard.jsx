@@ -4,11 +4,13 @@ import api from '../api';
 import { 
     Gavel, TrendingUp, Users, Settings, UserPlus, Save, 
     DollarSign, FileText, CheckCircle, AlertCircle, 
-    FileWarning, PlusCircle, Calculator, ShieldAlert
+    FileWarning, PlusCircle, Calculator, ShieldAlert,
+    Printer, PieChart // Imported Icons
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
-const TAB_MAP = { 'voting': 'gov-01', 'finance': 'fin-88', 'members': 'dir-x2', 'settings': 'cfg-99', 'register': 'new-00' };
+// Added 'reports' to the TAB_MAP
+const TAB_MAP = { 'voting': 'gov-01', 'finance': 'fin-88', 'members': 'dir-x2', 'settings': 'cfg-99', 'register': 'new-00', 'reports': 'rep-77' };
 const CODE_TO_TAB = Object.entries(TAB_MAP).reduce((acc, [key, val]) => { acc[val] = key; return acc; }, {});
 
 export default function ChairpersonDashboard({ user, onLogout }) {
@@ -34,6 +36,9 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
+    
+    // --- NEW: Report Data State ---
+    const [reportData, setReportData] = useState(null);
     
     // Dynamic Policy State
     const [currentRegFee, setCurrentRegFee] = useState(1500);
@@ -91,7 +96,11 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     ]);
                     setDeposits(resDeposits.data || []);
                     setTransactions(resTrans.data || []);
-                } 
+                } else if (activeTab === 'reports') {
+                    // --- NEW: Fetch Report Data ---
+                    const resRep = await api.get('/api/reports/summary');
+                    setReportData(resRep.data);
+                }
             } catch (err) { console.error("Fetch failed", err); }
         };
         fetchData();
@@ -114,7 +123,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     
     const totalAssets = stats.deposits + stats.deductions + stats.regFees + stats.fines + stats.penalties + stats.loanForms;
 
-    // --- NEW: Helper values for dynamic text ---
     const minWeeklyDeposit = saccoSettings.find(s => s.setting_key === 'min_weekly_deposit')?.setting_value || 250;
     const missedDepositPenalty = saccoSettings.find(s => s.setting_key === 'penalty_missed_savings')?.setting_value || 50;
 
@@ -208,6 +216,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) { alert("Update failed"); }
     };
 
+    const handlePrintReport = () => {
+        window.print();
+    };
+
     const renderTabButton = (id, label, icon) => (
         <button onClick={() => switchTab(id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition ${activeTab === id ? 'bg-white text-indigo-900 shadow-md' : 'text-indigo-200 hover:text-white'}`}>{icon} {label}</button>
     );
@@ -259,9 +271,9 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
             <DashboardHeader user={user} onLogout={onLogout} title="Chairperson Panel" />
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
-                {/* Header Area */}
-                <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg">
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12 print:p-0 print:max-w-none">
+                {/* Header Area - Hidden in Print */}
+                <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg print:hidden">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div>
                             <h1 className="text-2xl font-bold flex items-center gap-3">
@@ -272,6 +284,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                         <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto max-w-full">
                             {renderTabButton('voting', 'Voting', <Gavel size={16}/>)}
                             {renderTabButton('finance', 'Finance', <TrendingUp size={16}/>)}
+                            {renderTabButton('reports', 'Reports', <PieChart size={16}/>)} {/* NEW BUTTON */}
                             {renderTabButton('members', 'Directory', <Users size={16}/>)}
                             {renderTabButton('settings', 'Policies', <Settings size={16}/>)}
                             {renderTabButton('register', 'Add Member', <UserPlus size={16}/>)}
@@ -282,7 +295,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 {/* --- TAB CONTENT --- */}
 
                 {activeTab === 'voting' && (
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in print:hidden">
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                             <Gavel className="text-indigo-600" /> Motions on the Floor
                         </h2>
@@ -311,7 +324,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 )}
 
                 {activeTab === 'finance' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in print:hidden">
                         <div className="lg:col-span-2 space-y-6">
                             {/* Total Assets Banner */}
                             <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center">
@@ -495,9 +508,90 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
+                {/* --- NEW: REPORTS TAB --- */}
+                {activeTab === 'reports' && reportData && (
+                    <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-fade-in p-8">
+                        {/* Report Header for Print */}
+                        <div className="mb-8 border-b border-slate-200 pb-6 flex justify-between items-start">
+                            <div>
+                                <h1 className="text-3xl font-bold text-slate-800">Sacco Financial Report</h1>
+                                <p className="text-slate-500 mt-1">Generated on: {new Date(reportData.generated_at).toLocaleString()}</p>
+                            </div>
+                            <button onClick={handlePrintReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-700 print:hidden">
+                                <Printer size={18} /> Print Report
+                            </button>
+                        </div>
+
+                        {/* Report Content Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                            {/* Section 1: Financial Health */}
+                            <div>
+                                <h3 className="text-lg font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-4">Financial Position</h3>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-lg">
+                                        <span className="text-emerald-800 font-medium">Net Member Savings</span>
+                                        <span className="text-xl font-bold text-emerald-700">KES {reportData.financials.net_savings.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
+                                        <span className="text-blue-800 font-medium">Total Revenue (Fines/Fees)</span>
+                                        <span className="text-xl font-bold text-blue-700">KES {reportData.financials.total_revenue.toLocaleString()}</span>
+                                    </div>
+                                    
+                                    {/* MAIN FINANCIAL POSITION CARD */}
+                                    <div className="flex flex-col p-4 bg-indigo-900 rounded-xl text-white shadow-lg">
+                                        <span className="text-indigo-200 text-sm uppercase font-bold tracking-wider">Total Financial Position</span>
+                                        <span className="text-3xl font-extrabold mt-1">KES {reportData.financials.financial_position.toLocaleString()}</span>
+                                        <div className="mt-2 text-xs text-indigo-300 border-t border-indigo-700 pt-2">
+                                            Liquid Cash Available: <span className="text-white font-bold">KES {reportData.financials.cash_on_hand.toLocaleString()}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Section 2: Loan Portfolio */}
+                            <div>
+                                <h3 className="text-lg font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-4">Active Loan Portfolio</h3>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-600">Active Loans Count</span>
+                                        <span className="font-mono font-bold">{reportData.financials.loan_portfolio.active_loans_count}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-600">Principal Disbursed</span>
+                                        <span className="font-mono font-bold">KES {reportData.financials.loan_portfolio.total_disbursed_active.toLocaleString()}</span>
+                                    </div>
+                                    
+                                    {/* Interest Charged Row */}
+                                    <div className="flex justify-between text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                                        <span className="font-medium">+ Interest Charged</span>
+                                        <span className="font-mono font-bold">KES {reportData.financials.loan_portfolio.total_interest_charged.toLocaleString()}</span>
+                                    </div>
+
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-600">Total Repaid</span>
+                                        <span className="font-mono font-bold text-emerald-600">KES {reportData.financials.loan_portfolio.total_repaid_active.toLocaleString()}</span>
+                                    </div>
+                                    <div className="border-t border-slate-100 pt-3 flex justify-between items-center">
+                                        <span className="text-red-800 font-bold">Outstanding Balance (Risk)</span>
+                                        <span className="text-xl font-bold text-red-600">KES {reportData.financials.loan_portfolio.outstanding_balance.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Section 3: Membership */}
+                        <div className="mt-8 pt-6 border-t border-slate-200">
+                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Organization Stats</h3>
+                            <div className="mt-2 text-slate-700">
+                                <span className="text-2xl font-bold">{reportData.membership_count}</span> Active Members registered in the system.
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* 3. MEMBERS TAB */}
                 {activeTab === 'members' && (
-                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in print:hidden">
                         <div className="p-6 border-b border-slate-100">
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                                 <Users className="text-indigo-600"/> Member Directory
@@ -536,7 +630,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                 {/* 4. SETTINGS TAB */}
                 {activeTab === 'settings' && (
-                     <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                     <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in print:hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                                 <Settings className="text-indigo-600" /> Sacco Policy Configuration
@@ -563,7 +657,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                 {/* 5. REGISTER MEMBER TAB */}
                 {activeTab === 'register' && (
-                    <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in">
+                    <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in print:hidden">
                         <div className="mb-6 pb-6 border-b border-slate-100">
                             <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                                 <UserPlus className="text-emerald-600"/> Onboard New Member

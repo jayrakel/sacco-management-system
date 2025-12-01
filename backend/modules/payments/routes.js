@@ -9,12 +9,11 @@ const Joi = require('joi');
 // Validation for Manual Recording
 const recordTransactionSchema = Joi.object({
     userId: Joi.number().required(),
-    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT').required(),
+    // FIX: Added 'LOAN_FORM_FEE' and 'FEE_PAYMENT' to allowed types
+    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT', 'LOAN_FORM_FEE', 'FEE_PAYMENT').required(),
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
-    // --- MODIFICATION START: Made reference optional ---
     reference: Joi.string().optional().allow('', null) 
-    // --- MODIFICATION END ---
 });
 
 // 1. PAY LOAN FORM FEE
