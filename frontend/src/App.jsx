@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Login from './pages/Login';
 import MemberDashboard from './pages/MemberDashboard';
 import SecretaryDashboard from './pages/SecretaryDashboard';
@@ -11,9 +11,6 @@ import { Unauthorized, NotFound, ServerError } from './pages/ErrorPages';
 import api from './api';
 
 const INACTIVITY_LIMIT = 5 * 60 * 1000; 
-
-// 1. We remove the "ROUTES" constant entirely.
-// No more secret strings to guess.
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -34,7 +31,7 @@ export default function App() {
     localStorage.removeItem('token');
   }, []);
 
-  // Inactivity Timer Logic
+  // Inactivity Timer
   useEffect(() => {
     if (!user) return;
     let timeoutId;
@@ -54,18 +51,24 @@ export default function App() {
     };
   }, [user, handleLogout]);
 
-  // 2. The Internal "Traffic Cop" Component
-  // This decides what to show based on the User object in memory, not the URL.
+  // Unified Dashboard Controller
+  // This component decides what to render based on the user's role.
+  // The URL remains "/portal/..." for everyone, hiding the role.
   const DashboardController = () => {
+    const location = useLocation();
+    
     if (!user) return <Navigate to="/" replace />;
 
+    // Pass the current sub-path logic down if needed, or let components handle it
+    const commonProps = { user, onLogout };
+
     switch (user.role) {
-      case 'ADMIN': return <AdminDashboard user={user} onLogout={handleLogout} />;
-      case 'CHAIRPERSON': return <ChairpersonDashboard user={user} onLogout={handleLogout} />;
-      case 'SECRETARY': return <SecretaryDashboard user={user} onLogout={handleLogout} />;
-      case 'TREASURER': return <TreasurerDashboard user={user} onLogout={handleLogout} />;
-      case 'LOAN_OFFICER': return <LoanOfficerDashboard user={user} onLogout={handleLogout} />;
-      case 'MEMBER': return <MemberDashboard user={user} onLogout={handleLogout} />;
+      case 'ADMIN': return <AdminDashboard {...commonProps} />;
+      case 'CHAIRPERSON': return <ChairpersonDashboard {...commonProps} />;
+      case 'SECRETARY': return <SecretaryDashboard {...commonProps} />;
+      case 'TREASURER': return <TreasurerDashboard {...commonProps} />;
+      case 'LOAN_OFFICER': return <LoanOfficerDashboard {...commonProps} />;
+      case 'MEMBER': return <MemberDashboard {...commonProps} />;
       default: return <Navigate to="/unauthorized" />;
     }
   };
@@ -73,22 +76,21 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        {/* Public Login Route */}
+        {/* Public Login */}
         <Route 
           path="/" 
-          element={!user ? <Login setUser={setUser} /> : <Navigate to="/dashboard" />} 
+          element={!user ? <Login setUser={setUser} /> : <Navigate to="/portal" />} 
         />
         
-        {/* 3. The Unified Secure Route */}
-        {/* Everyone goes to /dashboard. What they see depends on who they are. */}
-        <Route path="/dashboard" element={<DashboardController />} />
+        {/* Secure Unified Route */}
+        {/* We use "/portal/*" to allow sub-paths like /portal/wx-99 */}
+        <Route path="/portal/*" element={<DashboardController />} />
         
         {/* Error Routes */}
         <Route path="/unauthorized" element={<Unauthorized />} />
         <Route path="/server-error" element={<ServerError />} />
         <Route path="/not-found" element={<NotFound />} />
         
-        {/* Catch-all */}
         <Route path="*" element={<Navigate to="/not-found" />} />
       </Routes>
     </Router>

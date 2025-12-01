@@ -1,28 +1,43 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../api';
 import { 
-    Gavel, 
-    TrendingUp, 
-    Users, 
-    Settings, 
-    UserPlus, 
-    Save, 
-    DollarSign, 
-    FileText,
-    CheckCircle,
-    AlertCircle,
-    FileWarning,
-    Briefcase,
-    PlusCircle,
-    Calculator
+    Gavel, TrendingUp, Users, Settings, UserPlus, Save, 
+    DollarSign, FileText, CheckCircle, AlertCircle, 
+    FileWarning, PlusCircle, Calculator
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
+// 1. Obfuscated Map: Maps internal state to "Secret" URL codes
+const TAB_MAP = {
+    'voting':   'gov-01',  // Governance/Voting
+    'finance':  'fin-88',  // Finance
+    'members':  'dir-x2',  // Directory
+    'settings': 'cfg-99',  // Config
+    'register': 'new-00'   // New Entry
+};
+
+// Create a reverse map for lookup
+const CODE_TO_TAB = Object.entries(TAB_MAP).reduce((acc, [key, val]) => {
+    acc[val] = key;
+    return acc;
+}, {});
+
 export default function ChairpersonDashboard({ user, onLogout }) {
-    const [activeTab, setActiveTab] = useState('finance'); 
+    const navigate = useNavigate();
+    const location = useLocation();
+
+    // 2. Determine active tab from URL Code
+    const getTabFromUrl = () => {
+        const pathParts = location.pathname.split('/');
+        const code = pathParts[pathParts.length - 1]; // Get last segment
+        return CODE_TO_TAB[code] || 'finance'; // Default to finance if unknown
+    };
+
+    const activeTab = getTabFromUrl();
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
-    // Initialize as arrays to prevent crash on map/reduce
+    // Data State
     const [agenda, setAgenda] = useState([]);
     const [deposits, setDeposits] = useState([]);
     const [transactions, setTransactions] = useState([]); 
@@ -44,9 +59,16 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         { label: "Noise/Misconduct", amount: 50 }
     ];
 
+    // 3. Tab Switcher Helper
+    const switchTab = (tabName) => {
+        const code = TAB_MAP[tabName];
+        navigate(`/portal/${code}`);
+    };
+
     useEffect(() => {
         const fetchData = async () => {
             try {
+                // Always fetch users for dropdowns
                 const resUsers = await api.get('/api/auth/users');
                 setUsers(resUsers.data || []);
 
@@ -71,13 +93,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         fetchData();
     }, [activeTab, refreshKey]);
 
-    // --- ROBUST CALCULATIONS ---
+    // --- CALCULATIONS ---
     const safeSum = (arr) => {
         if (!Array.isArray(arr)) return 0;
         return arr.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
     };
 
-    // Generic sum by type
     const sumByType = (type) => {
         if (!Array.isArray(transactions)) return 0;
         return transactions
@@ -85,13 +106,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
             .reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
     };
 
-    // Special case for Loan Forms (includes legacy)
     const sumLoanForms = () => {
         if (!Array.isArray(transactions)) return 0;
         return transactions.reduce((acc, t) => {
             const amt = parseFloat(t.amount) || 0;
             if (t.type === 'LOAN_FORM_FEE') return acc + amt;
-            if (t.type === 'FEE_PAYMENT') return acc + amt; // Support legacy data
+            if (t.type === 'FEE_PAYMENT') return acc + amt; 
             return acc;
         }, 0);
     };
@@ -126,10 +146,23 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         e.preventDefault();
         setLoading(true);
         try {
-            await api.post('/api/auth/register', regForm);
-            alert("New Member Registered!");
+            // FIX 400 Error: Backend rejects unknown fields.
+            // We strip 'paymentRef' and ensure keys match backend expectations exactly.
+            const payload = {
+                fullName: regForm.fullName,
+                email: regForm.email,
+                password: regForm.password,
+                phoneNumber: regForm.phoneNumber,
+                role: regForm.role
+            };
+
+            await api.post('/api/auth/register', payload);
+            alert("New Member Registered Successfully!");
             setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
-        } catch (err) { alert(err.response?.data?.error || "Registration failed"); }
+        } catch (err) { 
+            console.error("Reg Error", err);
+            alert(err.response?.data?.error || "Registration failed. Check inputs."); 
+        }
         setLoading(false);
     };
 
@@ -161,8 +194,9 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) { alert(err.response?.data?.error || "Update failed"); }
     };
 
+    // 4. Render Obfuscated Buttons
     const renderTabButton = (id, label, icon) => (
-        <button onClick={() => setActiveTab(id)}
+        <button onClick={() => switchTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition whitespace-nowrap ${
                 activeTab === id ? 'bg-white text-indigo-900 shadow-md' : 'text-indigo-200 hover:text-white'
             }`}>
@@ -193,29 +227,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         let typeLabel = '';
 
         switch(financeSubTab) {
-            case 'deposits':
-                data = deposits;
-                typeLabel = 'DEPOSIT';
-                break;
-            case 'reg_fees':
-                data = transactions.filter(t => t.type === 'REGISTRATION_FEE');
-                typeLabel = 'REG FEE';
-                break;
-            case 'loan_forms':
-                data = transactions.filter(t => ['FEE_PAYMENT', 'LOAN_FORM_FEE'].includes(t.type));
-                typeLabel = 'FORM FEE';
-                break;
-            case 'fines':
-                data = transactions.filter(t => t.type === 'FINE');
-                typeLabel = 'FINE';
-                break;
-            case 'penalties':
-                data = transactions.filter(t => t.type === 'PENALTY');
-                typeLabel = 'PENALTY';
-                break;
-            default: 
-                data = transactions.slice(0, 15);
-                typeLabel = 'MIXED';
+            case 'deposits': data = deposits; typeLabel = 'DEPOSIT'; break;
+            case 'reg_fees': data = transactions.filter(t => t.type === 'REGISTRATION_FEE'); typeLabel = 'REG FEE'; break;
+            case 'loan_forms': data = transactions.filter(t => ['FEE_PAYMENT', 'LOAN_FORM_FEE'].includes(t.type)); typeLabel = 'FORM FEE'; break;
+            case 'fines': data = transactions.filter(t => t.type === 'FINE'); typeLabel = 'FINE'; break;
+            case 'penalties': data = transactions.filter(t => t.type === 'PENALTY'); typeLabel = 'PENALTY'; break;
+            default: data = transactions.slice(0, 15); typeLabel = 'MIXED';
         }
 
         if (!data || data.length === 0) {
@@ -305,8 +322,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 {/* 2. FINANCE TAB */}
                 {activeTab === 'finance' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
-                        
-                        {/* LEFT COLUMN: Stats & Table */}
                         <div className="lg:col-span-2 space-y-6">
                             <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center">
                                 <div>
@@ -351,7 +366,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
-                        {/* RIGHT COLUMN: Record Transaction Tool */}
                         <div className="space-y-6">
                             <div className="bg-white rounded-2xl shadow-lg border border-indigo-100 p-6">
                                 <div className="mb-6 pb-4 border-b border-slate-100">
