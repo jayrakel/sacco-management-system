@@ -16,18 +16,17 @@ export default function Login({ setUser }) {
     setError('');
     
     try {
-      // FIX: Updated path to match backend '/api/auth/login'
       const res = await api.post('/api/auth/login', { email, password });
       
-      // Backend sets the cookie. We store non-sensitive user info.
       const { user } = res.data;
       
       localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
 
-      // Intelligent Routing
-      const paths = { 'ADMIN': '/admin', 'SECRETARY': '/secretary', 'MEMBER': '/member', 'TREASURER': '/treasurer' };
-      navigate(paths[user.role] || '/member');
+      // SECURITY UPGRADE:
+      // Instead of exposing roles in the URL (e.g. /admin, /member),
+      // we redirect everyone to the unified Dashboard Hub.
+      navigate('/dashboard'); 
       
     } catch (err) {
       console.error("Login Error:", err);
@@ -38,7 +37,7 @@ export default function Login({ setUser }) {
 
   return (
     <div className="min-h-screen flex bg-slate-50 font-sans">
-      {/* Left Side - Branding */}
+      {/* ... (UI code remains exactly the same as provided) ... */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 flex-col justify-center items-center p-12 text-white relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://images.unsplash.com/photo-1565514020176-8c2777e02a76?q=80&w=1000&auto=format&fit=crop')] opacity-10 bg-cover bg-center"></div>
         <div className="relative z-10 text-center">
@@ -52,7 +51,6 @@ export default function Login({ setUser }) {
         </div>
       </div>
 
-      {/* Right Side - Login Form */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="bg-white p-10 rounded-2xl shadow-xl border border-slate-100">
