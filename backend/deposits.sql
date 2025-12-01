@@ -1,8 +1,0 @@
-CREATE TABLE IF NOT EXISTS deposits (
-    id SERIAL PRIMARY KEY,
-    user_id INT REFERENCES users(id) ON DELETE CASCADE,
-    amount DECIMAL(15, 2) NOT NULL CHECK (amount > 0),
-    transaction_ref VARCHAR(50) UNIQUE NOT NULL, -- e.g., M-Pesa code
-    status VARCHAR(20) DEFAULT 'COMPLETED', -- PENDING, COMPLETED, FAILED
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
