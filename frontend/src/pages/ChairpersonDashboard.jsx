@@ -8,16 +8,14 @@ import {
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
-// 1. Obfuscated Map: Maps internal state to "Secret" URL codes
 const TAB_MAP = {
-    'voting':   'gov-01',  // Governance/Voting
-    'finance':  'fin-88',  // Finance
-    'members':  'dir-x2',  // Directory
-    'settings': 'cfg-99',  // Config
-    'register': 'new-00'   // New Entry
+    'voting':   'gov-01',
+    'finance':  'fin-88',
+    'members':  'dir-x2',
+    'settings': 'cfg-99',
+    'register': 'new-00'
 };
 
-// Create a reverse map for lookup
 const CODE_TO_TAB = Object.entries(TAB_MAP).reduce((acc, [key, val]) => {
     acc[val] = key;
     return acc;
@@ -27,11 +25,17 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const navigate = useNavigate();
     const location = useLocation();
 
-    // 2. Determine active tab from URL Code
+    // Safe URL parsing
     const getTabFromUrl = () => {
-        const pathParts = location.pathname.split('/');
-        const code = pathParts[pathParts.length - 1]; // Get last segment
-        return CODE_TO_TAB[code] || 'finance'; // Default to finance if unknown
+        try {
+            const pathParts = location.pathname.split('/');
+            const code = pathParts[pathParts.length - 1]; 
+            // If code is "portal", default to finance
+            if (!code || code === 'portal') return 'finance';
+            return CODE_TO_TAB[code] || 'finance';
+        } catch (e) {
+            return 'finance';
+        }
     };
 
     const activeTab = getTabFromUrl();
@@ -59,7 +63,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         { label: "Noise/Misconduct", amount: 50 }
     ];
 
-    // 3. Tab Switcher Helper
     const switchTab = (tabName) => {
         const code = TAB_MAP[tabName];
         navigate(`/portal/${code}`);
@@ -68,7 +71,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // Always fetch users for dropdowns
                 const resUsers = await api.get('/api/auth/users');
                 setUsers(resUsers.data || []);
 
@@ -93,7 +95,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         fetchData();
     }, [activeTab, refreshKey]);
 
-    // --- CALCULATIONS ---
+    // Calculations
     const safeSum = (arr) => {
         if (!Array.isArray(arr)) return 0;
         return arr.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
@@ -126,7 +128,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
     const totalAssets = Object.values(stats).reduce((a, b) => a + b, 0);
 
-    // --- ACTIONS ---
+    // Handlers
     const handleRecordTransaction = async (e) => {
         e.preventDefault();
         if(!transForm.userId) return alert("Select a member");
@@ -146,8 +148,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         e.preventDefault();
         setLoading(true);
         try {
-            // FIX 400 Error: Backend rejects unknown fields.
-            // We strip 'paymentRef' and ensure keys match backend expectations exactly.
             const payload = {
                 fullName: regForm.fullName,
                 email: regForm.email,
@@ -155,7 +155,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 phoneNumber: regForm.phoneNumber,
                 role: regForm.role
             };
-
             await api.post('/api/auth/register', payload);
             alert("New Member Registered Successfully!");
             setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
@@ -194,7 +193,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) { alert(err.response?.data?.error || "Update failed"); }
     };
 
-    // 4. Render Obfuscated Buttons
     const renderTabButton = (id, label, icon) => (
         <button onClick={() => switchTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition whitespace-nowrap ${
@@ -269,8 +267,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
             <DashboardHeader user={user} onLogout={onLogout} title="Chairperson Panel" />
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
-                
-                {/* Header */}
                 <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div>
@@ -289,7 +285,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 </div>
 
-                {/* 1. VOTING TAB */}
                 {activeTab === 'voting' && (
                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
@@ -319,7 +314,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. FINANCE TAB */}
                 {activeTab === 'finance' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
                         <div className="lg:col-span-2 space-y-6">
@@ -475,7 +469,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. MEMBERS TAB */}
                 {activeTab === 'members' && (
                      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100">
@@ -514,7 +507,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 4. SETTINGS TAB */}
                 {activeTab === 'settings' && (
                      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50">
@@ -541,7 +533,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 5. REGISTER MEMBER TAB */}
                 {activeTab === 'register' && (
                     <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in">
                         <div className="mb-6 pb-6 border-b border-slate-100">
@@ -570,7 +561,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                 </select>
                             </div>
 
-                            {/* MANDATORY FEE INPUT - Only for Members */}
                             {regForm.role === 'MEMBER' && (
                                 <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
                                     <label className="block text-xs font-bold text-emerald-800 uppercase mb-1">Registration Fee Ref (KES 500)</label>

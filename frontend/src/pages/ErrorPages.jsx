@@ -1,81 +1,61 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ShieldAlert, FileQuestion, RefreshCw, Home, ArrowLeft } from 'lucide-react';
+import { AlertTriangle, Lock, Server } from 'lucide-react';
 
-// Shared Layout for all error pages
-const ErrorLayout = ({ icon, title, message, actionLabel, onAction, secondaryAction }) => (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 text-center animate-fade-in">
-        <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-100 max-w-md w-full">
-            <div className="flex justify-center mb-6">
-                <div className="p-4 bg-slate-50 rounded-full border border-slate-100">
-                    {icon}
-                </div>
-            </div>
-            <h1 className="text-2xl font-extrabold text-slate-800 mb-2">{title}</h1>
-            <p className="text-slate-500 mb-8 leading-relaxed">{message}</p>
-            
-            <div className="flex flex-col gap-3">
-                <button 
-                    onClick={onAction}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-xl transition flex items-center justify-center gap-2"
-                >
-                    {actionLabel}
-                </button>
-                
-                {secondaryAction && (
-                    <button 
-                        onClick={secondaryAction.onClick}
-                        className="w-full bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 font-bold py-3 px-6 rounded-xl transition flex items-center justify-center gap-2"
-                    >
-                        {secondaryAction.label}
-                    </button>
-                )}
-            </div>
+const ErrorLayout = ({ icon, title, message, action }) => (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border border-slate-100">
+            <div className="flex justify-center mb-6">{icon}</div>
+            <h1 className="text-2xl font-bold text-slate-800 mb-2">{title}</h1>
+            <p className="text-slate-500 mb-8">{message}</p>
+            {action}
         </div>
-        <p className="mt-8 text-xs text-slate-400 font-mono">Sacco Management System v1.0</p>
     </div>
 );
 
-// 403 - Forbidden / Unauthorized
-export const Unauthorized = () => {
+export function Unauthorized() {
     const navigate = useNavigate();
     return (
         <ErrorLayout 
-            icon={<ShieldAlert size={48} className="text-amber-500" />}
+            icon={<Lock size={48} className="text-amber-500" />}
             title="Access Denied"
-            message="You do not have the required permissions to view this page. If you believe this is an error, please contact the System Administrator."
-            actionLabel="Return to Dashboard"
-            onAction={() => navigate('/')}
-            secondaryAction={{ label: "Log in as different user", onClick: () => navigate('/') }}
+            message="You do not have permission to view this specific page."
+            action={
+                <button onClick={() => navigate('/')} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold hover:bg-slate-800 transition">
+                    Return Home
+                </button>
+            }
         />
     );
-};
+}
 
-// 404 - Not Found
-export const NotFound = () => {
+export function NotFound() {
     const navigate = useNavigate();
     return (
         <ErrorLayout 
-            icon={<FileQuestion size={48} className="text-indigo-500" />}
+            icon={<AlertTriangle size={48} className="text-slate-400" />}
             title="Page Not Found"
-            message="The page you are looking for does not exist or has been moved. Check the URL or return home."
-            actionLabel="Go Home"
-            onAction={() => navigate('/')}
-            secondaryAction={{ label: "Go Back", onClick: () => navigate(-1) }}
+            message="The link you followed may be broken, or the page may have been removed."
+            action={
+                <button onClick={() => navigate('/')} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold hover:bg-slate-800 transition">
+                    Go Dashboard
+                </button>
+            }
         />
     );
-};
+}
 
-// 500 - Server Error
-export const ServerError = () => {
+export function ServerError() {
     return (
         <ErrorLayout 
-            icon={<AlertTriangle size={48} className="text-red-500" />}
+            icon={<Server size={48} className="text-red-500" />}
             title="System Error"
-            message="Our servers encountered an unexpected issue. The administrators have been notified. Please try again later."
-            actionLabel="Refresh Page"
-            onAction={() => window.location.reload()}
-            secondaryAction={{ label: "Return Home", onClick: () => window.location.href = '/' }}
+            message="Something went wrong on our end. Please try again later."
+            action={
+                <button onClick={() => window.location.reload()} className="bg-slate-900 text-white px-6 py-2 rounded-lg font-bold hover:bg-slate-800 transition">
+                    Reload Page
+                </button>
+            }
         />
     );
-};
+}
