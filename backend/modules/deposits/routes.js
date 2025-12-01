@@ -10,14 +10,14 @@ const depositSchema = Joi.object({
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required()
 });
 
-// --- FIX: Added 'TREASURER' to allowed roles ---
+// --- FIX: Select 'd.type' so the frontend can distinguish deductions ---
 router.get('/admin/all', authenticateUser, (req, res, next) => {
     if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next(); 
     else res.status(403).json({ error: "Access Denied" });
 }, async (req, res) => {
     try {
         const result = await db.query(
-            `SELECT d.id, d.amount, d.transaction_ref, d.created_at, u.full_name 
+            `SELECT d.id, d.amount, d.type, d.transaction_ref, d.created_at, u.full_name 
              FROM deposits d 
              JOIN users u ON d.user_id = u.id 
              ORDER BY d.created_at DESC`
@@ -49,9 +49,10 @@ router.post('/', authenticateUser, async (req, res) => {
     const ref = transactionRef || 'TRX-' + Math.random().toString(36).substr(2, 9).toUpperCase();
 
     try {
+        // --- Updated INSERT to include type ---
         const result = await db.query(
-            `INSERT INTO deposits (user_id, amount, transaction_ref, status) 
-             VALUES ($1, $2, $3, 'COMPLETED') RETURNING *`,
+            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
+             VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED') RETURNING *`,
             [req.user.id, amount, ref]
         );
 

@@ -12,7 +12,9 @@ const recordTransactionSchema = Joi.object({
     type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT').required(),
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
-    reference: Joi.string().required()
+    // --- MODIFICATION START: Made reference optional ---
+    reference: Joi.string().optional().allow('', null) 
+    // --- MODIFICATION END ---
 });
 
 // 1. PAY LOAN FORM FEE
@@ -123,7 +125,15 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
         return res.status(403).json({ error: "Access Denied" });
     }
 
-    const { userId, type, amount, reference, description } = req.body;
+    // --- MODIFICATION START: Use let instead of const to allow reassignment ---
+    let { userId, type, amount, reference, description } = req.body;
+    
+    // Auto-generate reference if not provided
+    if (!reference || reference.trim() === '') {
+        reference = `AUTO-${type}-${Date.now().toString().slice(-8)}-${Math.floor(Math.random() * 1000)}`;
+    }
+    // --- MODIFICATION END ---
+
     const client = await db.pool.connect();
 
     try {
@@ -154,7 +164,6 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
             if (currentSavings > 0) {
                 // Deduct from savings (Store as negative number)
                 // Even if they have 100 and fine is 200, we deduct 200, effectively putting them in negative/debt on shares? 
-                // Or we only deduct what they have? 
                 // Rule: We deduct full amount. If deposits go negative, it means they owe the Sacco.
                 const deductionAmount = -Math.abs(amount); 
                 const deductRef = `DEDUCT-${reference}`;

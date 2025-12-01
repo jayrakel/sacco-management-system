@@ -114,6 +114,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     
     const totalAssets = stats.deposits + stats.deductions + stats.regFees + stats.fines + stats.penalties + stats.loanForms;
 
+    // --- NEW: Helper values for dynamic text ---
+    const minWeeklyDeposit = saccoSettings.find(s => s.setting_key === 'min_weekly_deposit')?.setting_value || 250;
+    const missedDepositPenalty = saccoSettings.find(s => s.setting_key === 'penalty_missed_savings')?.setting_value || 50;
+
     // Styles for Transaction Types
     const getTypeStyle = (type) => {
         switch (type) {
@@ -136,7 +140,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setLoading(true);
         try {
             await api.post('/api/payments/admin/record', transForm);
-            alert("Transaction Recorded. If it was a fine/penalty and member had savings, it was auto-deducted.");
+            alert("Transaction Recorded. If ref code was blank, savings were auto-deducted.");
             setTransForm({ userId: '', type: 'FINE', amount: '', reference: '', description: '' });
             setRefreshKey(k => k + 1);
         } catch (err) { alert(err.response?.data?.error || "Failed to record"); }
@@ -165,7 +169,18 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    const applyFinePreset = (amount, label) => setTransForm({ ...transForm, amount: amount, description: label, type: 'FINE' });
+    const handleFinePresetChange = (e) => {
+        const label = e.target.value;
+        const preset = finePresets.find(p => p.label === label);
+        if (preset) {
+            setTransForm({ 
+                ...transForm, 
+                amount: preset.amount, 
+                description: preset.label,
+                type: 'FINE'
+            });
+        }
+    };
 
     const calculatePenalty = () => {
         const arrears = parseFloat(arrearsInput);
@@ -351,8 +366,9 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                 <h3 className="font-bold text-indigo-900 text-lg flex items-center gap-2 mb-2">
                                     <ShieldAlert size={20}/> Automated Compliance
                                 </h3>
+                                {/* --- MODIFIED: Dynamic Text from Settings --- */}
                                 <p className="text-xs text-indigo-700 mb-4">
-                                    Detect members who haven't made the weekly deposit (KES 250) and apply the penalty (KES 50).
+                                    Detect members who haven't made the weekly deposit (KES {parseFloat(minWeeklyDeposit).toLocaleString()}) and apply the penalty (KES {parseFloat(missedDepositPenalty).toLocaleString()}).
                                 </p>
                                 <button 
                                     onClick={handleRunCompliance} 
@@ -370,7 +386,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         <PlusCircle className="text-indigo-600"/> Record Receipt
                                     </h3>
                                     <p className="text-xs text-slate-500 mt-1">
-                                        Manually log offline payments. Fines/Penalties will auto-deduct from savings if balance exists.
+                                        Manually log offline payments. Fines/Penalties will auto-deduct from savings if no Ref Code is entered.
                                     </p>
                                 </div>
 
@@ -393,7 +409,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         <select 
                                             className="w-full border p-2 rounded-lg text-sm bg-slate-50"
                                             value={transForm.type}
-                                            onChange={e => setTransForm({...transForm, type: e.target.value})}
+                                            onChange={e => setTransForm({...transForm, type: e.target.value, amount: '', description: ''})}
                                         >
                                             <option value="FINE">Fine (Misconduct/Lateness)</option>
                                             <option value="PENALTY">Penalty (Arrears/Breach)</option>
@@ -404,17 +420,20 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                     </div>
 
                                     {transForm.type === 'FINE' && (
-                                        <div className="grid grid-cols-2 gap-2 mb-2">
-                                            {finePresets.map((p, i) => (
-                                                <button 
-                                                    key={i} type="button"
-                                                    onClick={() => applyFinePreset(p.amount, p.label)}
-                                                    className="text-xs border border-amber-200 bg-amber-50 text-amber-800 py-2 px-2 rounded hover:bg-amber-100 transition flex flex-col items-center text-center h-full justify-center"
-                                                >
-                                                    <span>{p.label}</span>
-                                                    <span className="font-bold">({parseFloat(p.amount).toLocaleString()})</span>
-                                                </button>
-                                            ))}
+                                        <div className="mb-2">
+                                            <label className="block text-xs font-bold text-amber-800 uppercase mb-1">Select Violation</label>
+                                            <select 
+                                                className="w-full border p-2 rounded-lg text-sm bg-amber-50 border-amber-200 text-amber-900"
+                                                onChange={handleFinePresetChange}
+                                                defaultValue=""
+                                            >
+                                                <option value="" disabled>-- Choose Violation --</option>
+                                                {finePresets.map((p, i) => (
+                                                    <option key={i} value={p.label}>
+                                                        {p.label} (KES {parseFloat(p.amount).toLocaleString()})
+                                                    </option>
+                                                ))}
+                                            </select>
                                         </div>
                                     )}
 
@@ -458,11 +477,13 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ref Code</label>
                                         <input 
-                                            type="text" required placeholder="Receipt No. or M-Pesa"
+                                            type="text" 
+                                            placeholder="Leave blank to auto-deduct"
                                             className="w-full border p-2 rounded-lg text-sm"
                                             value={transForm.reference}
                                             onChange={e => setTransForm({...transForm, reference: e.target.value})}
                                         />
+                                        <p className="text-[10px] text-slate-400 mt-1">If blank, system will deduct from member's savings.</p>
                                     </div>
 
                                     <button disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-md transition mt-4">

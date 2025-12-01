@@ -1,15 +1,9 @@
--- Deposits Table (Updated to allow Deductions)
-CREATE TABLE IF NOT EXISTS public.deposits (
+CREATE TABLE IF NOT EXISTS deposits (
     id SERIAL PRIMARY KEY,
-    user_id integer REFERENCES public.users(id) ON DELETE CASCADE,
-    
-    -- Amount can now be negative for fines/penalties
-    amount numeric(15,2) NOT NULL, 
-    
-    -- Track if it's a Saving or a Penalty Deduction
-    type character varying(20) DEFAULT 'DEPOSIT', -- 'DEPOSIT' or 'DEDUCTION'
-    
-    transaction_ref character varying(100) NOT NULL UNIQUE, -- Increased length for auto-generated refs
-    status character varying(20) DEFAULT 'COMPLETED',
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
+    user_id INTEGER REFERENCES users(id),
+    amount DECIMAL(10, 2) NOT NULL, -- "CHECK (amount > 0)" REMOVED
+    type VARCHAR(50) DEFAULT 'DEPOSIT',
+    transaction_ref VARCHAR(50) UNIQUE NOT NULL,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
