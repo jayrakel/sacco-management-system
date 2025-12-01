@@ -168,19 +168,22 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
             }
         }
 
-        // --- C. FIX: SMART LINKING FOR LOAN FEES ---
-        // If Admin manually records a loan fee, automatically mark the latest pending loan as PAID.
+        // --- C. SMART LINKING FOR LOAN FEES ---
+        // If Admin manually records a loan fee, automatically mark the latest FEE_PENDING loan as PAID.
         if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
-            // Find the most recent PENDING loan for this user
+            // Find the most recent FEE_PENDING loan for this user
+            // UPDATED: Changed status check from 'PENDING' to 'FEE_PENDING'
             const recentLoan = await client.query(
                 `SELECT id FROM loan_applications 
-                 WHERE user_id = $1 AND status = 'PENDING' 
+                 WHERE user_id = $1 AND status = 'FEE_PENDING' 
                  ORDER BY created_at DESC LIMIT 1`,
                 [userId]
             );
 
             if (recentLoan.rows.length > 0) {
                 const loanId = recentLoan.rows[0].id;
+                
+                // This updates the loan status and saves the manual/auto reference to the loan application
                 await client.query(
                     `UPDATE loan_applications 
                      SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
