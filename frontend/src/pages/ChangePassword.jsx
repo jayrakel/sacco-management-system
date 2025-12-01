@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { Lock, CheckCircle } from 'lucide-react';
 
-export default function ChangePassword() {
+export default function ChangePassword({ onPasswordChanged }) {
   const [newPassword, setNewPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -21,9 +21,17 @@ export default function ChangePassword() {
     try {
       await api.post('/api/auth/change-password', { newPassword });
       setSuccess(true);
+      
+      // Update local user state via prop callback
+      if (onPasswordChanged) {
+        onPasswordChanged();
+      }
+
+      // Redirect to the Unified Portal
       setTimeout(() => {
-        navigate('/admin'); 
+        navigate('/portal'); 
       }, 2000);
+
     } catch (err) {
       setError(err.response?.data?.error || "Failed to update password.");
     }
@@ -43,11 +51,12 @@ export default function ChangePassword() {
         {success ? (
           <div className="bg-green-50 text-green-700 p-4 rounded-lg text-center flex flex-col items-center gap-2">
             <CheckCircle size={32} />
-            <p>Password updated successfully! Redirecting...</p>
+            <p>Password updated successfully! Redirecting to Portal...</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && <div className="text-red-500 text-sm bg-red-50 p-3 rounded">{error}</div>}
+            
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
               <input 
@@ -57,6 +66,7 @@ export default function ChangePassword() {
                 placeholder="Enter new secure password"
               />
             </div>
+
             <button className="w-full bg-slate-900 text-white py-3 rounded-lg hover:bg-slate-800 transition">
               Update Password
             </button>

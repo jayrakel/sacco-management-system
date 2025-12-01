@@ -1,54 +1,46 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "../api";
-import { ShieldCheck, Lock, Mail, ChevronRight } from "lucide-react";
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../api'; 
+import { ShieldCheck, Lock, Mail, ChevronRight } from 'lucide-react';
 
 export default function Login({ setUser }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
-
+    setError('');
+    
     try {
-      const res = await api.post("/api/auth/login", { email, password });
+      const res = await api.post('/api/auth/login', { email, password });
       const { user } = res.data;
-
-      localStorage.setItem("user", JSON.stringify(user));
+      
+      localStorage.setItem('user', JSON.stringify(user));
       setUser(user);
 
-      // --- INTEGRATION: Force Password Change ---
+      // 1. Check for Forced Password Change
       if (user.mustChangePassword) {
-        navigate("/change-password");
+        navigate('/change-password');
         return;
       }
-      // ------------------------------------------
 
-      const paths = {
-        ADMIN: "/admin",
-        SECRETARY: "/secretary",
-        MEMBER: "/member",
-        TREASURER: "/treasurer",
-        CHAIRPERSON: "/chairperson" // Added chairperson support
-      };
-      navigate(paths[user.role] || "/member");
-
+      // 2. Standard Redirect to Unified Portal
+      navigate('/portal'); 
+      
     } catch (err) {
       console.error("Login Error:", err);
-      setError(err.response?.data?.error || "Connection failed.");
+      setError(err.response?.data?.error || "Connection failed. Please check your server.");
     }
     setLoading(false);
   };
 
-  // ... (Rest of the UI remains exactly the same) ...
   return (
     <div className="min-h-screen flex bg-slate-50 font-sans">
-      {/* Left Side - Branding */}
+      {/* Left Side */}
       <div className="hidden lg:flex w-1/2 bg-slate-900 flex-col justify-center items-center p-12 text-white relative overflow-hidden">
         <div className="relative z-10 text-center">
           <div className="bg-emerald-500/20 p-6 rounded-full inline-block mb-8 backdrop-blur-sm">
@@ -61,7 +53,7 @@ export default function Login({ setUser }) {
         </div>
       </div>
 
-      {/* Right Side - Login Form */}
+      {/* Right Side */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="bg-white p-10 rounded-2xl shadow-xl border border-slate-100">
@@ -79,11 +71,11 @@ export default function Login({ setUser }) {
                 <label className="text-sm font-semibold text-slate-700">Email Address</label>
                 <div className="relative">
                   <Mail className="absolute left-4 top-3.5 text-slate-400" size={20} />
-                  <input
-                    type="email" required
+                  <input 
+                    type="email" required 
                     className="w-full border border-slate-200 pl-12 pr-4 py-3 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all bg-slate-50 focus:bg-white"
                     placeholder="name@sacco.com"
-                    value={email} onChange={(e) => setEmail(e.target.value)}
+                    value={email} onChange={e => setEmail(e.target.value)}
                   />
                 </div>
               </div>
@@ -92,11 +84,11 @@ export default function Login({ setUser }) {
                 <label className="text-sm font-semibold text-slate-700">Password</label>
                 <div className="relative">
                   <Lock className="absolute left-4 top-3.5 text-slate-400" size={20} />
-                  <input
-                    type="password" required
+                  <input 
+                    type="password" required 
                     className="w-full border border-slate-200 pl-12 pr-4 py-3 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all bg-slate-50 focus:bg-white"
                     placeholder="••••••••"
-                    value={password} onChange={(e) => setPassword(e.target.value)}
+                    value={password} onChange={e => setPassword(e.target.value)}
                   />
                 </div>
               </div>
