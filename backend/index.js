@@ -10,6 +10,10 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// --- FIX: Trust Proxy for Render/Heroku Deployment ---
+// This resolves the "X-Forwarded-For" error with express-rate-limit
+app.set('trust proxy', 1); 
+
 // --- FIX: Normalize Origin (Remove trailing slash if present) ---
 const rawOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ALLOWED_ORIGIN = rawOrigin.endsWith('/') ? rawOrigin.slice(0, -1) : rawOrigin;
@@ -33,8 +37,8 @@ app.use(cookieParser());
 
 // 2. Rate Limiting
 const loginLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, 
-    max: 100, 
+    windowMs: 30 * 60 * 1000, 
+    max: 5, 
     message: { error: "Too many login attempts, please try again later." }
 });
 
