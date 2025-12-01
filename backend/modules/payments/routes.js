@@ -3,10 +3,20 @@ const router = express.Router();
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 const { validate, paymentSchema, repaymentSchema } = require('../common/validation');
+const Joi = require('joi');
 
-// 1. PAY APPLICATION FEE
+// Validation for Manual Recording
+const recordTransactionSchema = Joi.object({
+    userId: Joi.number().required(),
+    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT').required(),
+    amount: Joi.number().positive().required(),
+    description: Joi.string().optional().allow(''),
+    reference: Joi.string().required()
+});
+
+// 1. PAY LOAN FORM FEE (User pays to access loan)
+// Was 'pay-fee', now conceptually 'pay-loan-form-fee'
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
-    // ... (Keep existing code as is)
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
 
@@ -20,9 +30,10 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
             return res.status(403).json({ error: "Unauthorized payment" });
         }
 
+        // UPDATED: Type is now LOAN_FORM_FEE
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
-             VALUES ($1, 'FEE_PAYMENT', 500, $2)`,
+             VALUES ($1, 'LOAN_FORM_FEE', 500, $2)`,
             [req.user.id, mpesaRef]
         );
 
@@ -44,16 +55,13 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN
+// 2. REPAY LOAN (unchanged logic, just kept for context)
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
-    // ... (Keep existing code as is)
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
 
     try {
         await client.query('BEGIN');
-
-        // FETCH columns needed for logic, including total_due
         const loanRes = await client.query(
             `SELECT user_id, amount_requested, amount_repaid, status, total_due 
              FROM loan_applications WHERE id=$1`, 
@@ -66,23 +74,19 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         if (loan.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
         if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan is not active" });
 
-        // LOGIC CHANGE: Use total_due if it exists (new loans), else use amount_requested (old loans)
         const targetAmount = parseFloat(loan.total_due || loan.amount_requested);
-        
         const currentPaid = parseFloat(loan.amount_repaid || 0);
         const repaymentAmt = parseFloat(amount);
         const newPaid = currentPaid + repaymentAmt;
 
-        // 1. Record Transaction
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
              VALUES ($1, 'LOAN_REPAYMENT', $2, $3)`,
             [req.user.id, repaymentAmt, mpesaRef]
         );
 
-        // 2. Check Completion
         let newStatus = 'ACTIVE';
-        if (newPaid >= targetAmount - 1) { // -1 for small floating point differences
+        if (newPaid >= targetAmount - 1) {
             newStatus = 'COMPLETED';
         }
 
@@ -94,7 +98,6 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         );
 
         await client.query('COMMIT');
-        
         res.json({ 
             success: true, 
             message: newStatus === 'COMPLETED' ? "Loan fully repaid!" : "Repayment received.",
@@ -110,9 +113,42 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// GET ALL TRANSACTIONS (Updated to allow CHAIRPERSON)
+// 3. [NEW] RECORD MANUAL TRANSACTION (For Chairperson/Admin)
+router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) {
+        return res.status(403).json({ error: "Access Denied" });
+    }
+
+    const { userId, type, amount, reference, description } = req.body;
+
+    try {
+        // Insert transaction
+        const result = await db.query(
+            `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [userId, type, amount, reference, description]
+        );
+
+        // If it's a DEPOSIT, we must also update the deposits table/balance logic if you maintain a separate table
+        // For this system, we previously used a 'deposits' table. Let's sync them or assume transactions is the source of truth.
+        // To keep it compatible with MemberDashboard which reads 'deposits' table:
+        if (type === 'DEPOSIT') {
+            await db.query(
+                `INSERT INTO deposits (user_id, amount, transaction_ref, status) 
+                 VALUES ($1, $2, $3, 'COMPLETED')`,
+                [userId, amount, reference]
+            );
+        }
+
+        res.json({ success: true, transaction: result.rows[0] });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to record transaction" });
+    }
+});
+
+// GET ALL TRANSACTIONS
 router.get('/admin/all', authenticateUser, (req, res, next) => {
-    // Allow both ADMIN and CHAIRPERSON
     if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next();
     else res.status(403).json({ error: "Access Denied" });
 }, async (req, res) => {

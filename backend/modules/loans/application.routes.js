@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../db');
 const { validate, loanSubmitSchema } = require('../common/validation');
-const { getSetting } = require('../settings/routes');
-const { notifyUser, notifyAll } = require('../common/notify'); // Added notifyAll import
+const { getSetting } = require('../settings/routes'); // Import getSetting
+const { notifyUser, notifyAll } = require('../common/notify');
 
-// GET MY LOAN STATUS (With Weekly Schedule Logic)
+// GET MY LOAN STATUS (With Grace Period & Weekly Schedule Logic)
 router.get('/status', async (req, res) => {
     try {
         // 1. Fetch Loan Data
@@ -40,6 +40,10 @@ router.get('/status', async (req, res) => {
         };
 
         if (loan.status === 'ACTIVE' && loan.disbursed_at && loan.total_due > 0) {
+            // --- GRACE PERIOD CONFIGURATION ---
+            const graceSetting = await getSetting('grace_period_weeks');
+            const graceWeeks = parseInt(graceSetting) || 0;
+
             const now = new Date();
             const start = new Date(loan.disbursed_at);
             const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
@@ -47,34 +51,47 @@ router.get('/status', async (req, res) => {
             // Calculate Weekly Installment Amount
             const weeklyAmount = loan.total_due / loan.repayment_weeks;
 
-            // Calculate Time Passed (Weeks completed)
-            // We use Math.floor so payment is due at the END of the week
+            // Calculate Raw Time Passed (Total weeks since money entered account)
             const diffMs = now - start;
-            const weeksPassed = Math.floor(diffMs / oneWeekMs);
+            const rawWeeksPassed = Math.floor(diffMs / oneWeekMs);
             
-            // Cap expected weeks at total duration (loan doesn't ask for more than total due)
-            const weeksExpected = Math.min(weeksPassed + 1, loan.repayment_weeks); 
+            // --- CORE LOGIC: EFFECTIVE WEEKS ---
+            // We subtract the grace period from the raw weeks.
+            // If grace is 2 weeks, and rawWeeks is 1, effective is -1 (Still in grace).
+            // If rawWeeks is 2, effective is 0 (Week 1 just started/due).
+            const effectiveWeeksPassed = rawWeeksPassed - graceWeeks;
+
+            let installmentsDue = 0;
+            let statusText = 'ON TRACK';
+
+            if (effectiveWeeksPassed < 0) {
+                // We are IN the grace period
+                installmentsDue = 0;
+                statusText = 'GRACE PERIOD';
+            } else {
+                // Grace period over, schedule is active
+                // "effectiveWeeksPassed + 1" means we count the current week as Due immediately (Start-of-week logic)
+                installmentsDue = Math.min(effectiveWeeksPassed + 1, loan.repayment_weeks);
+            }
             
-            // Wait, if it's Day 1, Weeks Passed is 0. 
-            // Usually, first payment is due after Week 1. 
-            // So Expected = weeksPassed * weeklyAmount. 
-            // If they pay in Week 1, it's a Pre-payment.
-            
-            const installmentsDue = weeksPassed; // Full weeks passed
             const amountExpectedSoFar = installmentsDue * weeklyAmount;
             
-            // CORE LOGIC: Running Balance
-            // Positive = Pre-payment (Paid more than expected)
-            // Negative = Arrears (Paid less than expected)
+            // Running Balance: 
+            // If in grace period, expected is 0, so any Repaid amount is positive (Pre-payment).
             const runningBalance = loan.amount_repaid - amountExpectedSoFar;
+
+            if (statusText !== 'GRACE PERIOD') {
+                statusText = runningBalance < 0 ? 'IN ARREARS' : 'AHEAD OF SCHEDULE';
+            }
 
             loan.schedule = {
                 weekly_installment: weeklyAmount,
-                weeks_passed: weeksPassed,
-                weeks_remaining: Math.max(0, loan.repayment_weeks - weeksPassed),
+                // Display 0/10 if in grace, otherwise 1/10, 2/10 etc.
+                weeks_passed: Math.max(0, effectiveWeeksPassed + 1),
+                weeks_remaining: Math.max(0, loan.repayment_weeks - (effectiveWeeksPassed + 1)),
                 expected_to_date: amountExpectedSoFar,
                 running_balance: runningBalance,
-                status_text: runningBalance < 0 ? 'IN ARREARS' : 'AHEAD OF SCHEDULE'
+                status_text: statusText
             };
         }
 
@@ -85,6 +102,7 @@ router.get('/status', async (req, res) => {
     }
 });
 
+// ... (Keep the rest of the existing routes: /init, /submit, /final-submit unchanged)
 // START APPLICATION (With Fee Pending)
 router.post('/init', async (req, res) => {
     try {

@@ -12,7 +12,9 @@ import {
     CheckCircle,
     AlertCircle,
     FileWarning,
-    Briefcase
+    Briefcase,
+    PlusCircle,
+    Calculator
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -26,32 +28,45 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     // Data State
     const [agenda, setAgenda] = useState([]);
     const [deposits, setDeposits] = useState([]);
-    const [transactions, setTransactions] = useState([]); // Stores fees, fines, penalties
+    const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
     
     // Forms & UI State
     const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
+    
+    // Manual Transaction Form State
+    const [transForm, setTransForm] = useState({ userId: '', type: 'FINE', amount: '', reference: '', description: '' });
+    const [arrearsInput, setArrearsInput] = useState(''); // For calculator
+    
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
+
+    // Fine Presets
+    const FINE_PRESETS = [
+        { label: "Late Arrival", amount: 100 },
+        { label: "Absent", amount: 200 },
+        { label: "No Uniform/ID", amount: 50 },
+        { label: "Noise/Misconduct", amount: 50 } // Base amount
+    ];
 
     useEffect(() => {
         const fetchData = async () => {
             try {
+                // Always fetch users for the dropdowns
+                const resUsers = await api.get('/api/auth/users');
+                setUsers(resUsers.data);
+
                 if (activeTab === 'voting') {
                     const res = await api.get('/api/loan/chair/agenda');
                     setAgenda(res.data);
                 } else if (activeTab === 'finance') {
-                    // Fetch both Deposits and General Transactions
                     const [resDeposits, resTrans] = await Promise.all([
                         api.get('/api/deposits/admin/all'),
                         api.get('/api/payments/admin/all')
                     ]);
                     setDeposits(resDeposits.data);
                     setTransactions(resTrans.data);
-                } else if (activeTab === 'members') {
-                    const res = await api.get('/api/auth/users');
-                    setUsers(res.data);
                 } else if (activeTab === 'settings') {
                     const res = await api.get('/api/settings');
                     setSaccoSettings(res.data.filter(s => s.category === 'SACCO'));
@@ -65,24 +80,60 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
     // --- FINANCIAL CALCULATIONS ---
     const calcTotal = (type) => {
-        if (type === 'DEPOSIT') return deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+        // Deposits are stored in their own table usually, but we sync manually. 
+        // To avoid double counting if we have duplicates, we rely on type filtering from the main transactions list if possible, 
+        // or specific logic. Here we use the 'transactions' list which now aggregates everything for the Admin view.
         return transactions
             .filter(t => t.type === type)
             .reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
     };
 
+    // Handle legacy data mapping where 'FEE_PAYMENT' was the only type
+    const getLegacyType = (t) => {
+        if (t.type === 'FEE_PAYMENT') return 'LOAN_FORM_FEE'; // Map old data
+        return t.type;
+    }
+
     const stats = {
-        deposits: calcTotal('DEPOSIT'),
-        appFees: calcTotal('FEE_PAYMENT'),
-        // Assuming types 'FINE', 'PENALTY', 'LOAN_FORM' exist in your system logic or will be added
+        deposits: deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0),
+        // "Application Fee" is now "Registration Fee"
+        regFees: calcTotal('REGISTRATION_FEE'),
+        // "Loan Form Fee"
+        loanForms: transactions.reduce((acc, t) => (getLegacyType(t) === 'LOAN_FORM_FEE' ? acc + parseFloat(t.amount) : acc), 0),
         fines: calcTotal('FINE'),
         penalties: calcTotal('PENALTY'),
-        loanForms: calcTotal('LOAN_FORM'),
     };
 
     const totalAssets = Object.values(stats).reduce((a, b) => a + b, 0);
 
     // --- ACTIONS ---
+    const handleRecordTransaction = async (e) => {
+        e.preventDefault();
+        if(!transForm.userId) return alert("Select a member");
+        setLoading(true);
+        try {
+            await api.post('/api/payments/admin/record', transForm);
+            alert("Transaction Recorded Successfully");
+            setTransForm({ userId: '', type: 'FINE', amount: '', reference: '', description: '' });
+            setRefreshKey(k => k + 1);
+        } catch (err) {
+            alert(err.response?.data?.error || "Failed to record");
+        }
+        setLoading(false);
+    };
+
+    const applyFinePreset = (amount, label) => {
+        setTransForm({ ...transForm, amount: amount, description: label, type: 'FINE' });
+    };
+
+    const calculatePenalty = () => {
+        const arrears = parseFloat(arrearsInput);
+        if(!arrears) return;
+        const penalty = Math.ceil(arrears * 0.05); // 5% Calculation
+        setTransForm({ ...transForm, amount: penalty, description: `5% Penalty on arrears of ${arrears}`, type: 'PENALTY' });
+    };
+
+    // ... (Keep existing openVoting, handleSettingUpdate, handleRegister helpers) ...
     const openVoting = async (loanId) => {
         if (!window.confirm("Open the floor for voting?")) return;
         try {
@@ -144,14 +195,20 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         let data = [];
         let typeLabel = '';
 
+        // Filter Logic
         switch(financeSubTab) {
             case 'deposits':
                 data = deposits;
                 typeLabel = 'DEPOSIT';
                 break;
-            case 'app_fees':
-                data = transactions.filter(t => t.type === 'FEE_PAYMENT');
-                typeLabel = 'APP FEE';
+            case 'reg_fees': // New Category
+                data = transactions.filter(t => t.type === 'REGISTRATION_FEE');
+                typeLabel = 'REG FEE';
+                break;
+            case 'loan_forms':
+                // Include legacy FEE_PAYMENT and new LOAN_FORM_FEE
+                data = transactions.filter(t => ['FEE_PAYMENT', 'LOAN_FORM_FEE'].includes(t.type));
+                typeLabel = 'FORM FEE';
                 break;
             case 'fines':
                 data = transactions.filter(t => t.type === 'FINE');
@@ -161,28 +218,28 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 data = transactions.filter(t => t.type === 'PENALTY');
                 typeLabel = 'PENALTY';
                 break;
-            case 'loan_forms':
-                data = transactions.filter(t => t.type === 'LOAN_FORM');
-                typeLabel = 'FORM FEE';
-                break;
-            default: // overview shows recent mixed
-                const recentDeps = deposits.slice(0, 5).map(d => ({...d, type: 'DEPOSIT'}));
-                const recentTrans = transactions.slice(0, 5);
-                data = [...recentDeps, ...recentTrans].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+            default: // overview
+                data = transactions.slice(0, 10);
                 typeLabel = 'MIXED';
         }
 
         if (data.length === 0) {
-            return <tr><td colSpan="4" className="p-8 text-center text-slate-400">No records found for this category.</td></tr>;
+            return <tr><td colSpan="5" className="p-8 text-center text-slate-400">No records found for this category.</td></tr>;
         }
 
         return data.map((item, idx) => (
             <tr key={item.id || idx} className="hover:bg-slate-50 transition">
                 <td className="px-6 py-4 font-medium text-slate-900">{item.full_name}</td>
                 <td className="px-6 py-4">
-                    <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold">
-                        {item.type || typeLabel}
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        (item.type === 'FINE' || item.type === 'PENALTY') ? 'bg-red-100 text-red-700' : 
+                        item.type === 'REGISTRATION_FEE' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                        {item.type === 'FEE_PAYMENT' ? 'LOAN_FORM_FEE' : item.type || typeLabel}
                     </span>
+                </td>
+                <td className="px-6 py-4 text-slate-600 text-xs max-w-[150px] truncate" title={item.description}>
+                    {item.description || '-'}
                 </td>
                 <td className="px-6 py-4 font-mono text-slate-700 font-bold">
                     KES {parseFloat(item.amount).toLocaleString()}
@@ -201,7 +258,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
                 
-                {/* Header & Navigation */}
+                {/* Header & Navigation (Unchanged) */}
                 <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div>
@@ -222,7 +279,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                 {/* 1. VOTING TAB */}
                 {activeTab === 'voting' && (
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
+                   // ... (Keep existing code)
+                   <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                             <Gavel className="text-indigo-600" /> Motions on the Floor
                         </h2>
@@ -250,99 +308,173 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. FINANCE TAB (EXPANDED) */}
+                {/* 2. FINANCE TAB (MAJOR UPDATE) */}
                 {activeTab === 'finance' && (
-                    <div className="space-y-6 animate-fade-in">
-                        {/* Main Total Header */}
-                        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-                            <div>
-                                <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest">Total Sacco Assets</p>
-                                <h2 className="text-4xl font-extrabold mt-2">KES {totalAssets.toLocaleString()}</h2>
-                                <p className="text-sm text-emerald-100 mt-2 opacity-80">Consolidated balance of all accounts</p>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
+                        
+                        {/* LEFT COLUMN: Stats & Table (Span 2) */}
+                        <div className="lg:col-span-2 space-y-6">
+                            {/* Main Total Header */}
+                            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center">
+                                <div>
+                                    <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest">Total Assets Collected</p>
+                                    <h2 className="text-4xl font-extrabold mt-2">KES {totalAssets.toLocaleString()}</h2>
+                                </div>
+                                <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm"><DollarSign size={48} className="text-emerald-100" /></div>
                             </div>
-                            <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
-                                <DollarSign size={48} className="text-emerald-100" />
+
+                            {/* Breakdown Cards */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                                <FinanceCard title="Deposits" amount={stats.deposits} icon={<TrendingUp size={20}/>} activeId="deposits" colorClass="emerald" />
+                                <FinanceCard title="Reg Fees" amount={stats.regFees} icon={<UserPlus size={20}/>} activeId="reg_fees" colorClass="blue" />
+                                <FinanceCard title="Loan Forms" amount={stats.loanForms} icon={<FileText size={20}/>} activeId="loan_forms" colorClass="indigo" />
+                                <FinanceCard title="Fines" amount={stats.fines} icon={<AlertCircle size={20}/>} activeId="fines" colorClass="amber" />
+                                <FinanceCard title="Penalties" amount={stats.penalties} icon={<FileWarning size={20}/>} activeId="penalties" colorClass="red" />
+                            </div>
+
+                            {/* Detailed List */}
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                                    <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                        <FileText size={16} className="text-slate-500"/> 
+                                        {financeSubTab.replace('_', ' ').toUpperCase()} Records
+                                    </h3>
+                                    {financeSubTab !== 'overview' && <button onClick={() => setFinanceSubTab('overview')} className="text-xs font-bold text-indigo-600 hover:underline">View All</button>}
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-slate-600 text-left">
+                                        <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
+                                            <tr>
+                                                <th className="px-6 py-3">Member</th>
+                                                <th className="px-6 py-3">Type</th>
+                                                <th className="px-6 py-3">Description</th>
+                                                <th className="px-6 py-3">Amount</th>
+                                                <th className="px-6 py-3">Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {renderFinanceTableRows()}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Breakdown Cards */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                            <FinanceCard 
-                                title="Deposits" 
-                                amount={stats.deposits} 
-                                icon={<TrendingUp size={20}/>} 
-                                activeId="deposits" 
-                                colorClass="emerald"
-                            />
-                            <FinanceCard 
-                                title="App Fees" 
-                                amount={stats.appFees} 
-                                icon={<Briefcase size={20}/>} 
-                                activeId="app_fees" 
-                                colorClass="blue"
-                            />
-                            <FinanceCard 
-                                title="Loan Forms" 
-                                amount={stats.loanForms} 
-                                icon={<FileText size={20}/>} 
-                                activeId="loan_forms" 
-                                colorClass="indigo"
-                            />
-                            <FinanceCard 
-                                title="Fines" 
-                                amount={stats.fines} 
-                                icon={<AlertCircle size={20}/>} 
-                                activeId="fines" 
-                                colorClass="amber"
-                            />
-                            <FinanceCard 
-                                title="Penalties" 
-                                amount={stats.penalties} 
-                                icon={<FileWarning size={20}/>} 
-                                activeId="penalties" 
-                                colorClass="red"
-                            />
-                        </div>
+                        {/* RIGHT COLUMN: Record Transaction Tool (Span 1) */}
+                        <div className="space-y-6">
+                            <div className="bg-white rounded-2xl shadow-lg border border-indigo-100 p-6">
+                                <div className="mb-6 pb-4 border-b border-slate-100">
+                                    <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                        <PlusCircle className="text-indigo-600"/> Record Receipt
+                                    </h3>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        Manually log offline payments for fines, penalties, or registration.
+                                    </p>
+                                </div>
 
-                        {/* Detailed List */}
-                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                                <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                                    <FileText size={16} className="text-slate-500"/> 
-                                    {financeSubTab === 'overview' ? 'Recent Transactions' : 
-                                     financeSubTab === 'deposits' ? 'Deposit History' :
-                                     financeSubTab === 'app_fees' ? 'Application Fees' :
-                                     financeSubTab === 'loan_forms' ? 'Loan Form Purchases' :
-                                     financeSubTab === 'fines' ? 'Fines & Citations' : 'Penalty Log'}
-                                </h3>
-                                {financeSubTab !== 'overview' && (
-                                    <button onClick={() => setFinanceSubTab('overview')} className="text-xs font-bold text-indigo-600 hover:underline">
-                                        View All
+                                <form onSubmit={handleRecordTransaction} className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Member</label>
+                                        <select 
+                                            className="w-full border p-2 rounded-lg text-sm bg-slate-50"
+                                            value={transForm.userId}
+                                            onChange={e => setTransForm({...transForm, userId: e.target.value})}
+                                            required
+                                        >
+                                            <option value="">Select Member...</option>
+                                            {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Type</label>
+                                        <select 
+                                            className="w-full border p-2 rounded-lg text-sm bg-slate-50"
+                                            value={transForm.type}
+                                            onChange={e => setTransForm({...transForm, type: e.target.value})}
+                                        >
+                                            <option value="FINE">Fine (Misconduct/Lateness)</option>
+                                            <option value="PENALTY">Penalty (Arrears/Breach)</option>
+                                            <option value="REGISTRATION_FEE">Registration Fee</option>
+                                            <option value="DEPOSIT">Manual Deposit</option>
+                                        </select>
+                                    </div>
+
+                                    {/* Fine Presets */}
+                                    {transForm.type === 'FINE' && (
+                                        <div className="grid grid-cols-2 gap-2 mb-2">
+                                            {FINE_PRESETS.map((p, i) => (
+                                                <button 
+                                                    key={i} type="button"
+                                                    onClick={() => applyFinePreset(p.amount, p.label)}
+                                                    className="text-xs border border-amber-200 bg-amber-50 text-amber-800 py-1 px-2 rounded hover:bg-amber-100 transition"
+                                                >
+                                                    {p.label} ({p.amount})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Penalty Calculator */}
+                                    {transForm.type === 'PENALTY' && (
+                                        <div className="bg-red-50 p-3 rounded-lg border border-red-100 mb-2">
+                                            <label className="block text-xs font-bold text-red-800 mb-1 flex items-center gap-1">
+                                                <Calculator size={12}/> Calc 5% of Arrears
+                                            </label>
+                                            <div className="flex gap-2">
+                                                <input 
+                                                    type="number" placeholder="Arrears Amount"
+                                                    className="w-full text-xs border p-1 rounded"
+                                                    value={arrearsInput}
+                                                    onChange={e => setArrearsInput(e.target.value)}
+                                                />
+                                                <button type="button" onClick={calculatePenalty} className="text-xs bg-red-600 text-white px-2 rounded font-bold">Apply</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amount (KES)</label>
+                                        <input 
+                                            type="number" required
+                                            className="w-full border p-2 rounded-lg font-mono font-bold text-slate-700"
+                                            value={transForm.amount}
+                                            onChange={e => setTransForm({...transForm, amount: e.target.value})}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Description</label>
+                                        <input 
+                                            type="text" placeholder="e.g. Late for AGM"
+                                            className="w-full border p-2 rounded-lg text-sm"
+                                            value={transForm.description}
+                                            onChange={e => setTransForm({...transForm, description: e.target.value})}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ref Code</label>
+                                        <input 
+                                            type="text" required placeholder="Receipt No. or M-Pesa"
+                                            className="w-full border p-2 rounded-lg text-sm"
+                                            value={transForm.reference}
+                                            onChange={e => setTransForm({...transForm, reference: e.target.value})}
+                                        />
+                                    </div>
+
+                                    <button disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-md transition mt-4">
+                                        {loading ? 'Saving...' : 'Save Record'}
                                     </button>
-                                )}
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-slate-600 text-left">
-                                    <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
-                                        <tr>
-                                            <th className="px-6 py-3">Member</th>
-                                            <th className="px-6 py-3">Type</th>
-                                            <th className="px-6 py-3">Amount</th>
-                                            <th className="px-6 py-3">Reference / Date</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {renderFinanceTableRows()}
-                                    </tbody>
-                                </table>
+                                </form>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {/* 3. MEMBERS TAB */}
+                {/* 3. MEMBERS TAB (Unchanged) */}
                 {activeTab === 'members' && (
-                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100">
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                                 <Users className="text-indigo-600"/> Member Directory
@@ -373,16 +505,15 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                             </td>
                                         </tr>
                                     ))}
-                                    {users.length === 0 && <tr><td colSpan="3" className="p-6 text-center text-slate-400">No users found.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 )}
 
-                {/* 4. SACCO SETTINGS TAB */}
+                {/* 4. SETTINGS TAB (Unchanged) */}
                 {activeTab === 'settings' && (
-                    <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                     <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                                 <Settings className="text-indigo-600" /> Sacco Policy Configuration
@@ -407,7 +538,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 5. REGISTER MEMBER TAB */}
+                {/* 5. REGISTER MEMBER TAB (Unchanged) */}
                 {activeTab === 'register' && (
                     <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in">
                         <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2">
