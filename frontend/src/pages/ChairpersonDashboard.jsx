@@ -30,7 +30,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         try {
             const pathParts = location.pathname.split('/');
             const code = pathParts[pathParts.length - 1]; 
-            // If code is "portal", default to finance
             if (!code || code === 'portal') return 'finance';
             return CODE_TO_TAB[code] || 'finance';
         } catch (e) {
@@ -47,6 +46,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
+    const [currentRegFee, setCurrentRegFee] = useState(1500); // Updated Default
     
     // Forms
     const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
@@ -71,9 +71,19 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
+                // 1. Always fetch settings to get current Reg Fee
+                const resSettings = await api.get('/api/settings');
+                if (resSettings.data) {
+                    setSaccoSettings(resSettings.data.filter(s => s.category === 'SACCO'));
+                    const feeSetting = resSettings.data.find(s => s.setting_key === 'registration_fee');
+                    if (feeSetting) setCurrentRegFee(parseFloat(feeSetting.setting_value));
+                }
+
+                // 2. Fetch Users
                 const resUsers = await api.get('/api/auth/users');
                 setUsers(resUsers.data || []);
 
+                // 3. Tab Specific Data
                 if (activeTab === 'voting') {
                     const res = await api.get('/api/loan/chair/agenda');
                     setAgenda(res.data || []);
@@ -84,10 +94,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     ]);
                     setDeposits(resDeposits.data || []);
                     setTransactions(resTrans.data || []);
-                } else if (activeTab === 'settings') {
-                    const res = await api.get('/api/settings');
-                    if (res.data) setSaccoSettings(res.data.filter(s => s.category === 'SACCO'));
-                }
+                } 
             } catch (err) {
                 console.error("Fetch failed", err);
             }
@@ -153,10 +160,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 email: regForm.email,
                 password: regForm.password,
                 phoneNumber: regForm.phoneNumber,
-                role: regForm.role
+                role: regForm.role,
+                paymentRef: regForm.paymentRef 
             };
+
             await api.post('/api/auth/register', payload);
-            alert("New Member Registered Successfully!");
+            alert(`New Member Registered! KES ${currentRegFee} fee recorded.`);
             setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
         } catch (err) { 
             console.error("Reg Error", err);
@@ -540,7 +549,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                 <UserPlus className="text-emerald-600"/> Onboard New Member
                             </h2>
                             <p className="text-slate-500 text-sm mt-1">
-                                Mandatory KES 500 Registration Fee required for all new members.
+                                Mandatory KES {currentRegFee} Registration Fee required for all new members.
                             </p>
                         </div>
                         <form onSubmit={handleRegister} className="space-y-5">
@@ -563,7 +572,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                             {regForm.role === 'MEMBER' && (
                                 <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
-                                    <label className="block text-xs font-bold text-emerald-800 uppercase mb-1">Registration Fee Ref (KES 500)</label>
+                                    <label className="block text-xs font-bold text-emerald-800 uppercase mb-1">Registration Fee Ref (KES {currentRegFee})</label>
                                     <input 
                                         required 
                                         type="text" 

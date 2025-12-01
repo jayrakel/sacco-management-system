@@ -16,8 +16,9 @@ const registerSchema = Joi.object({
     email: Joi.string().email().required(),
     password: Joi.string().min(6).required(),
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
-    // ADD 'CHAIRPERSON' TO THIS LIST
-    role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN', 'LOAN_OFFICER', 'CHAIRPERSON').default('MEMBER')
+    role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN', 'LOAN_OFFICER', 'CHAIRPERSON').default('MEMBER'),
+    // NEW: Allow payment reference for registration fees
+    paymentRef: Joi.string().optional().allow('') 
 });
 
 const loginSchema = Joi.object({
@@ -32,16 +33,14 @@ const loanSubmitSchema = Joi.object({
     repaymentWeeks: Joi.number().integer().min(1).max(52).required()
 });
 
-// Fee Payment (Fixed Amount)
 const paymentSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
     mpesaRef: Joi.string().pattern(/^[A-Z0-9]{10,15}$/).required()
 });
 
-// New: Loan Repayment (Variable Amount)
 const repaymentSchema = Joi.object({
     loanAppId: Joi.number().integer().required(),
-    amount: Joi.number().integer().min(50).required(), // Min Repayment 50
+    amount: Joi.number().integer().min(50).required(), 
     mpesaRef: Joi.string().required()
 });
 
@@ -59,7 +58,7 @@ module.exports = {
     loginSchema, 
     loanSubmitSchema, 
     paymentSchema,
-    repaymentSchema, // <--- Exported here
+    repaymentSchema, 
     tableLoanSchema,
     disburseSchema
 };
