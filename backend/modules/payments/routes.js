@@ -9,14 +9,14 @@ const Joi = require('joi');
 // Validation for Manual Recording
 const recordTransactionSchema = Joi.object({
     userId: Joi.number().required(),
-    // FIX: Added 'LOAN_FORM_FEE' and 'FEE_PAYMENT' to allowed types
+    // Added LOAN_FORM_FEE and FEE_PAYMENT to validation
     type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT', 'LOAN_FORM_FEE', 'FEE_PAYMENT').required(),
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
     reference: Joi.string().optional().allow('', null) 
 });
 
-// 1. PAY LOAN FORM FEE
+// 1. PAY LOAN FORM FEE (User initiated)
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -118,20 +118,18 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// 3. RECORD MANUAL TRANSACTION (With Auto-Deduct from Savings)
+// 3. RECORD MANUAL TRANSACTION (With Smart Linking & Auto-Deduct)
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
     }
 
-    // --- MODIFICATION START: Use let instead of const to allow reassignment ---
     let { userId, type, amount, reference, description } = req.body;
     
     // Auto-generate reference if not provided
     if (!reference || reference.trim() === '') {
         reference = `AUTO-${type}-${Date.now().toString().slice(-8)}-${Math.floor(Math.random() * 1000)}`;
     }
-    // --- MODIFICATION END ---
 
     const client = await db.pool.connect();
 
@@ -147,7 +145,6 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
 
         // B. Handle Savings Logic
         if (type === 'DEPOSIT') {
-            // Add to savings
             await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
                  VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
@@ -155,15 +152,11 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
             );
         } 
         else if (type === 'FINE' || type === 'PENALTY') {
-            // --- AUTO-DEDUCT LOGIC ---
-            // Check current savings balance
+            // Auto-Deduct from savings (Store as negative number)
             const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1", [userId]);
             const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
 
             if (currentSavings > 0) {
-                // Deduct from savings (Store as negative number)
-                // Even if they have 100 and fine is 200, we deduct 200, effectively putting them in negative/debt on shares? 
-                // Rule: We deduct full amount. If deposits go negative, it means they owe the Sacco.
                 const deductionAmount = -Math.abs(amount); 
                 const deductRef = `DEDUCT-${reference}`;
                 
@@ -174,6 +167,29 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
                 );
             }
         }
+
+        // --- C. FIX: SMART LINKING FOR LOAN FEES ---
+        // If Admin manually records a loan fee, automatically mark the latest pending loan as PAID.
+        if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
+            // Find the most recent PENDING loan for this user
+            const recentLoan = await client.query(
+                `SELECT id FROM loan_applications 
+                 WHERE user_id = $1 AND status = 'PENDING' 
+                 ORDER BY created_at DESC LIMIT 1`,
+                [userId]
+            );
+
+            if (recentLoan.rows.length > 0) {
+                const loanId = recentLoan.rows[0].id;
+                await client.query(
+                    `UPDATE loan_applications 
+                     SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
+                     WHERE id=$3`,
+                    [reference, amount, loanId]
+                );
+            }
+        }
+        // ---------------------------------------------
 
         await client.query('COMMIT');
         res.json({ success: true, transaction: result.rows[0] });
