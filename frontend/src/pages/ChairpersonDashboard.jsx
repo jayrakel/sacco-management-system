@@ -19,57 +19,50 @@ import {
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function ChairpersonDashboard({ user, onLogout }) {
-    // Main Tabs
     const [activeTab, setActiveTab] = useState('finance'); 
-    
-    // Finance Sub-Tabs
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
-    // Data State
+    // Initialize as arrays to prevent crash on map/reduce
     const [agenda, setAgenda] = useState([]);
     const [deposits, setDeposits] = useState([]);
     const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
     
-    // Forms & UI State
-    const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
-    
-    // Manual Transaction Form State
+    // Forms
+    const [regForm, setRegForm] = useState({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
     const [transForm, setTransForm] = useState({ userId: '', type: 'FINE', amount: '', reference: '', description: '' });
-    const [arrearsInput, setArrearsInput] = useState(''); // For calculator
+    const [arrearsInput, setArrearsInput] = useState('');
     
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
 
-    // Fine Presets
     const FINE_PRESETS = [
         { label: "Late Arrival", amount: 100 },
         { label: "Absent", amount: 200 },
         { label: "No Uniform/ID", amount: 50 },
-        { label: "Noise/Misconduct", amount: 50 } // Base amount
+        { label: "Noise/Misconduct", amount: 50 }
     ];
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // Always fetch users for the dropdowns
                 const resUsers = await api.get('/api/auth/users');
-                setUsers(resUsers.data);
+                setUsers(resUsers.data || []);
 
                 if (activeTab === 'voting') {
                     const res = await api.get('/api/loan/chair/agenda');
-                    setAgenda(res.data);
+                    setAgenda(res.data || []);
                 } else if (activeTab === 'finance') {
                     const [resDeposits, resTrans] = await Promise.all([
                         api.get('/api/deposits/admin/all'),
                         api.get('/api/payments/admin/all')
                     ]);
-                    setDeposits(resDeposits.data);
-                    setTransactions(resTrans.data);
+                    setDeposits(resDeposits.data || []);
+                    setTransactions(resTrans.data || []);
                 } else if (activeTab === 'settings') {
                     const res = await api.get('/api/settings');
-                    setSaccoSettings(res.data.filter(s => s.category === 'SACCO'));
+                    if (res.data) setSaccoSettings(res.data.filter(s => s.category === 'SACCO'));
                 }
             } catch (err) {
                 console.error("Fetch failed", err);
@@ -78,30 +71,37 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         fetchData();
     }, [activeTab, refreshKey]);
 
-    // --- FINANCIAL CALCULATIONS ---
-    const calcTotal = (type) => {
-        // Deposits are stored in their own table usually, but we sync manually. 
-        // To avoid double counting if we have duplicates, we rely on type filtering from the main transactions list if possible, 
-        // or specific logic. Here we use the 'transactions' list which now aggregates everything for the Admin view.
-        return transactions
-            .filter(t => t.type === type)
-            .reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+    // --- ROBUST CALCULATIONS ---
+    const safeSum = (arr) => {
+        if (!Array.isArray(arr)) return 0;
+        return arr.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
     };
 
-    // Handle legacy data mapping where 'FEE_PAYMENT' was the only type
-    const getLegacyType = (t) => {
-        if (t.type === 'FEE_PAYMENT') return 'LOAN_FORM_FEE'; // Map old data
-        return t.type;
-    }
+    // Generic sum by type
+    const sumByType = (type) => {
+        if (!Array.isArray(transactions)) return 0;
+        return transactions
+            .filter(t => t.type === type)
+            .reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+    };
+
+    // Special case for Loan Forms (includes legacy)
+    const sumLoanForms = () => {
+        if (!Array.isArray(transactions)) return 0;
+        return transactions.reduce((acc, t) => {
+            const amt = parseFloat(t.amount) || 0;
+            if (t.type === 'LOAN_FORM_FEE') return acc + amt;
+            if (t.type === 'FEE_PAYMENT') return acc + amt; // Support legacy data
+            return acc;
+        }, 0);
+    };
 
     const stats = {
-        deposits: deposits.reduce((acc, curr) => acc + parseFloat(curr.amount), 0),
-        // "Application Fee" is now "Registration Fee"
-        regFees: calcTotal('REGISTRATION_FEE'),
-        // "Loan Form Fee"
-        loanForms: transactions.reduce((acc, t) => (getLegacyType(t) === 'LOAN_FORM_FEE' ? acc + parseFloat(t.amount) : acc), 0),
-        fines: calcTotal('FINE'),
-        penalties: calcTotal('PENALTY'),
+        deposits: safeSum(deposits),
+        regFees: sumByType('REGISTRATION_FEE'),
+        loanForms: sumLoanForms(),
+        fines: sumByType('FINE'),
+        penalties: sumByType('PENALTY'),
     };
 
     const totalAssets = Object.values(stats).reduce((a, b) => a + b, 0);
@@ -122,6 +122,17 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
+    const handleRegister = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/api/auth/register', regForm);
+            alert("New Member Registered!");
+            setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '' });
+        } catch (err) { alert(err.response?.data?.error || "Registration failed"); }
+        setLoading(false);
+    };
+
     const applyFinePreset = (amount, label) => {
         setTransForm({ ...transForm, amount: amount, description: label, type: 'FINE' });
     };
@@ -129,11 +140,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const calculatePenalty = () => {
         const arrears = parseFloat(arrearsInput);
         if(!arrears) return;
-        const penalty = Math.ceil(arrears * 0.05); // 5% Calculation
+        const penalty = Math.ceil(arrears * 0.05);
         setTransForm({ ...transForm, amount: penalty, description: `5% Penalty on arrears of ${arrears}`, type: 'PENALTY' });
     };
 
-    // ... (Keep existing openVoting, handleSettingUpdate, handleRegister helpers) ...
     const openVoting = async (loanId) => {
         if (!window.confirm("Open the floor for voting?")) return;
         try {
@@ -151,17 +161,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) { alert(err.response?.data?.error || "Update failed"); }
     };
 
-    const handleRegister = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            await api.post('/api/auth/register', regForm);
-            alert("New Member Registered!");
-            setRegForm({ fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER' });
-        } catch (err) { alert(err.response?.data?.error || "Registration failed"); }
-        setLoading(false);
-    };
-
     const renderTabButton = (id, label, icon) => (
         <button onClick={() => setActiveTab(id)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition whitespace-nowrap ${
@@ -171,7 +170,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         </button>
     );
 
-    // Helper for Finance Cards
     const FinanceCard = ({ title, amount, icon, activeId, colorClass }) => (
         <div 
             onClick={() => setFinanceSubTab(activeId)}
@@ -190,23 +188,20 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         </div>
     );
 
-    // Helper to render table rows based on selected sub-tab
     const renderFinanceTableRows = () => {
         let data = [];
         let typeLabel = '';
 
-        // Filter Logic
         switch(financeSubTab) {
             case 'deposits':
                 data = deposits;
                 typeLabel = 'DEPOSIT';
                 break;
-            case 'reg_fees': // New Category
+            case 'reg_fees':
                 data = transactions.filter(t => t.type === 'REGISTRATION_FEE');
                 typeLabel = 'REG FEE';
                 break;
             case 'loan_forms':
-                // Include legacy FEE_PAYMENT and new LOAN_FORM_FEE
                 data = transactions.filter(t => ['FEE_PAYMENT', 'LOAN_FORM_FEE'].includes(t.type));
                 typeLabel = 'FORM FEE';
                 break;
@@ -218,17 +213,17 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 data = transactions.filter(t => t.type === 'PENALTY');
                 typeLabel = 'PENALTY';
                 break;
-            default: // overview
-                data = transactions.slice(0, 10);
+            default: 
+                data = transactions.slice(0, 15);
                 typeLabel = 'MIXED';
         }
 
-        if (data.length === 0) {
+        if (!data || data.length === 0) {
             return <tr><td colSpan="5" className="p-8 text-center text-slate-400">No records found for this category.</td></tr>;
         }
 
         return data.map((item, idx) => (
-            <tr key={item.id || idx} className="hover:bg-slate-50 transition">
+            <tr key={item.id || idx} className="hover:bg-slate-50 transition text-sm">
                 <td className="px-6 py-4 font-medium text-slate-900">{item.full_name}</td>
                 <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded text-xs font-bold ${
@@ -258,7 +253,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
                 
-                {/* Header & Navigation (Unchanged) */}
+                {/* Header */}
                 <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-6">
                         <div>
@@ -279,7 +274,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                 {/* 1. VOTING TAB */}
                 {activeTab === 'voting' && (
-                   // ... (Keep existing code)
                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 animate-fade-in">
                         <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                             <Gavel className="text-indigo-600" /> Motions on the Floor
@@ -308,13 +302,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. FINANCE TAB (MAJOR UPDATE) */}
+                {/* 2. FINANCE TAB */}
                 {activeTab === 'finance' && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
                         
-                        {/* LEFT COLUMN: Stats & Table (Span 2) */}
+                        {/* LEFT COLUMN: Stats & Table */}
                         <div className="lg:col-span-2 space-y-6">
-                            {/* Main Total Header */}
                             <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center">
                                 <div>
                                     <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest">Total Assets Collected</p>
@@ -323,7 +316,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                 <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-sm"><DollarSign size={48} className="text-emerald-100" /></div>
                             </div>
 
-                            {/* Breakdown Cards */}
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                                 <FinanceCard title="Deposits" amount={stats.deposits} icon={<TrendingUp size={20}/>} activeId="deposits" colorClass="emerald" />
                                 <FinanceCard title="Reg Fees" amount={stats.regFees} icon={<UserPlus size={20}/>} activeId="reg_fees" colorClass="blue" />
@@ -332,7 +324,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                 <FinanceCard title="Penalties" amount={stats.penalties} icon={<FileWarning size={20}/>} activeId="penalties" colorClass="red" />
                             </div>
 
-                            {/* Detailed List */}
                             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                                 <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -360,7 +351,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
-                        {/* RIGHT COLUMN: Record Transaction Tool (Span 1) */}
+                        {/* RIGHT COLUMN: Record Transaction Tool */}
                         <div className="space-y-6">
                             <div className="bg-white rounded-2xl shadow-lg border border-indigo-100 p-6">
                                 <div className="mb-6 pb-4 border-b border-slate-100">
@@ -400,7 +391,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         </select>
                                     </div>
 
-                                    {/* Fine Presets */}
                                     {transForm.type === 'FINE' && (
                                         <div className="grid grid-cols-2 gap-2 mb-2">
                                             {FINE_PRESETS.map((p, i) => (
@@ -415,7 +405,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         </div>
                                     )}
 
-                                    {/* Penalty Calculator */}
                                     {transForm.type === 'PENALTY' && (
                                         <div className="bg-red-50 p-3 rounded-lg border border-red-100 mb-2">
                                             <label className="block text-xs font-bold text-red-800 mb-1 flex items-center gap-1">
@@ -472,7 +461,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. MEMBERS TAB (Unchanged) */}
+                {/* 3. MEMBERS TAB */}
                 {activeTab === 'members' && (
                      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100">
@@ -511,7 +500,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 4. SETTINGS TAB (Unchanged) */}
+                {/* 4. SETTINGS TAB */}
                 {activeTab === 'settings' && (
                      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50">
@@ -538,18 +527,24 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 5. REGISTER MEMBER TAB (Unchanged) */}
+                {/* 5. REGISTER MEMBER TAB */}
                 {activeTab === 'register' && (
                     <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-lg border border-indigo-100 p-8 animate-fade-in">
-                        <h2 className="text-2xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                            <UserPlus className="text-emerald-600"/> Onboard New Member
-                        </h2>
+                        <div className="mb-6 pb-6 border-b border-slate-100">
+                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                                <UserPlus className="text-emerald-600"/> Onboard New Member
+                            </h2>
+                            <p className="text-slate-500 text-sm mt-1">
+                                Mandatory KES 500 Registration Fee required for all new members.
+                            </p>
+                        </div>
                         <form onSubmit={handleRegister} className="space-y-5">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <input required type="text" placeholder="Full Name" className="border p-3 rounded-xl w-full" value={regForm.fullName} onChange={e => setRegForm({...regForm, fullName: e.target.value})} />
                                 <input required type="tel" placeholder="Phone Number" className="border p-3 rounded-xl w-full" value={regForm.phoneNumber} onChange={e => setRegForm({...regForm, phoneNumber: e.target.value})} />
                             </div>
                             <input required type="email" placeholder="Email Address" className="border p-3 rounded-xl w-full" value={regForm.email} onChange={e => setRegForm({...regForm, email: e.target.value})} />
+                            
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                 <input required type="text" placeholder="Default Password" className="border p-3 rounded-xl w-full" value={regForm.password} onChange={e => setRegForm({...regForm, password: e.target.value})} />
                                 <select className="border p-3 rounded-xl w-full bg-white" value={regForm.role} onChange={e => setRegForm({...regForm, role: e.target.value})}>
@@ -560,8 +555,24 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                     <option value="ADMIN">System Admin</option>
                                 </select>
                             </div>
-                            <button disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold transition">
-                                {loading ? 'Processing...' : 'Create Account'}
+
+                            {/* MANDATORY FEE INPUT - Only for Members */}
+                            {regForm.role === 'MEMBER' && (
+                                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                                    <label className="block text-xs font-bold text-emerald-800 uppercase mb-1">Registration Fee Ref (KES 500)</label>
+                                    <input 
+                                        required 
+                                        type="text" 
+                                        placeholder="Enter M-Pesa/Cash Receipt Code" 
+                                        className="border p-3 rounded-xl w-full border-emerald-200" 
+                                        value={regForm.paymentRef || ''} 
+                                        onChange={e => setRegForm({...regForm, paymentRef: e.target.value})} 
+                                    />
+                                </div>
+                            )}
+
+                            <button disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-bold transition shadow-lg">
+                                {loading ? 'Processing...' : 'Confirm Payment & Create Account'}
                             </button>
                         </form>
                     </div>

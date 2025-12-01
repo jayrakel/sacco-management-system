@@ -14,8 +14,8 @@ const recordTransactionSchema = Joi.object({
     reference: Joi.string().required()
 });
 
+// ... (Keep existing /pay-fee and /repay-loan routes exactly as they were) ...
 // 1. PAY LOAN FORM FEE (User pays to access loan)
-// Was 'pay-fee', now conceptually 'pay-loan-form-fee'
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -30,7 +30,6 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
             return res.status(403).json({ error: "Unauthorized payment" });
         }
 
-        // UPDATED: Type is now LOAN_FORM_FEE
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
              VALUES ($1, 'LOAN_FORM_FEE', 500, $2)`,
@@ -55,7 +54,7 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN (unchanged logic, just kept for context)
+// 2. REPAY LOAN
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -113,25 +112,22 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// 3. [NEW] RECORD MANUAL TRANSACTION (For Chairperson/Admin)
+// 3. RECORD MANUAL TRANSACTION
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
-    if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) {
+    // Allow Treasurer to record specific manual transactions if needed, or keep to Chair/Admin
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
     }
 
     const { userId, type, amount, reference, description } = req.body;
 
     try {
-        // Insert transaction
         const result = await db.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [userId, type, amount, reference, description]
         );
 
-        // If it's a DEPOSIT, we must also update the deposits table/balance logic if you maintain a separate table
-        // For this system, we previously used a 'deposits' table. Let's sync them or assume transactions is the source of truth.
-        // To keep it compatible with MemberDashboard which reads 'deposits' table:
         if (type === 'DEPOSIT') {
             await db.query(
                 `INSERT INTO deposits (user_id, amount, transaction_ref, status) 
@@ -147,9 +143,10 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
     }
 });
 
-// GET ALL TRANSACTIONS
+// GET ALL TRANSACTIONS (Updated to include TREASURER)
 router.get('/admin/all', authenticateUser, (req, res, next) => {
-    if (['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) next();
+    // Added TREASURER to the list
+    if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next();
     else res.status(403).json({ error: "Access Denied" });
 }, async (req, res) => {
     try {
