@@ -37,8 +37,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
     
-    // --- NEW: Report Data State ---
+    // --- NEW: Report & Branding Data State ---
     const [reportData, setReportData] = useState(null);
+    const [logo, setLogo] = useState(null);
+    const [saccoName, setSaccoName] = useState('Sacco');
     
     // Dynamic Policy State
     const [currentRegFee, setCurrentRegFee] = useState(1500);
@@ -62,6 +64,13 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     const allSettings = resSettings.data;
                     setSaccoSettings(allSettings.filter(s => s.category === 'SACCO'));
                     
+                    // NEW: Extract Logo & Name
+                    const logoSetting = allSettings.find(s => s.setting_key === 'sacco_logo');
+                    if (logoSetting) setLogo(logoSetting.setting_value);
+
+                    const nameSetting = allSettings.find(s => s.setting_key === 'sacco_name');
+                    if (nameSetting) setSaccoName(nameSetting.setting_value);
+
                     const regFeeSetting = allSettings.find(s => s.setting_key === 'registration_fee');
                     if (regFeeSetting) setCurrentRegFee(parseFloat(regFeeSetting.setting_value));
 
@@ -269,7 +278,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
     return (
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-            <DashboardHeader user={user} onLogout={onLogout} title="Chairperson Panel" />
+            {/* UPDATED: Hidden in print */}
+            <div className="print:hidden">
+                <DashboardHeader user={user} onLogout={onLogout} title="Chairperson Panel" />
+            </div>
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12 print:p-0 print:max-w-none">
                 {/* Header Area - Hidden in Print */}
@@ -324,10 +336,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 )}
 
                 {activeTab === 'finance' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in print:hidden">
-                        <div className="lg:col-span-2 space-y-6">
+                    /* UPDATED: print:block to allow full width, removing grid constraints in print */
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in print:block">
+                        {/* UPDATED: print:w-full to take full width */}
+                        <div className="lg:col-span-2 space-y-6 print:w-full">
                             {/* Total Assets Banner */}
-                            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center">
+                            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-8 shadow-lg flex justify-between items-center print:hidden">
                                 <div>
                                     <p className="text-emerald-100 font-bold text-sm uppercase tracking-widest">Total Net Assets</p>
                                     <h2 className="text-4xl font-extrabold mt-2">KES {totalAssets.toLocaleString()}</h2>
@@ -336,7 +350,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             </div>
 
                             {/* Finance Summary Cards */}
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 print:hidden">
                                 <FinanceCard title="Deposits" amount={stats.deposits} icon={<TrendingUp size={20}/>} activeId="deposits" colorClass="emerald" />
                                 <FinanceCard title="Deductions" amount={stats.deductions} icon={<TrendingUp size={20} className="rotate-180"/>} activeId="deductions" colorClass="rose" />
                                 <FinanceCard title="Reg Fees" amount={stats.regFees} icon={<UserPlus size={20}/>} activeId="reg_fees" colorClass="blue" />
@@ -346,14 +360,40 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             </div>
 
                             {/* Transactions Table */}
-                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                            {/* UPDATED: print:shadow-none print:border-none for cleaner look */}
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print:shadow-none print:border-none">
+                                <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center print:hidden">
                                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
                                         <FileText size={16} className="text-slate-500"/> 
                                         {financeSubTab.replace('_', ' ').toUpperCase()} Records
                                     </h3>
-                                    {financeSubTab !== 'overview' && <button onClick={() => setFinanceSubTab('overview')} className="text-xs font-bold text-indigo-600 hover:underline">View All</button>}
+                                    <div className="flex gap-3 items-center">
+                                        <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:text-indigo-600 hover:border-indigo-200 transition shadow-sm">
+                                            <Printer size={14}/> Print Report
+                                        </button>
+                                        {financeSubTab !== 'overview' && <button onClick={() => setFinanceSubTab('overview')} className="text-xs font-bold text-indigo-600 hover:underline">View All</button>}
+                                    </div>
                                 </div>
+
+                                {/* Print Only Header with LOGO */}
+                                <div className="hidden print:block p-6 border-b border-slate-100">
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex items-start gap-4">
+                                            {/* NEW: Logo in Print */}
+                                            {logo && <img src={logo} alt="Logo" className="h-16 w-auto object-contain" />}
+                                            <div>
+                                                <h1 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">{financeSubTab.replace('_', ' ')} Report</h1>
+                                                {/* NEW: Dynamic Name in Subtitle */}
+                                                <p className="text-slate-500 text-sm mt-1">{saccoName} Management System • Financial Statement</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-slate-400 uppercase font-bold">Generated On</p>
+                                            <p className="text-sm font-mono text-slate-700">{new Date().toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm text-slate-600 text-left">
                                         <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
@@ -373,7 +413,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
-                        <div className="space-y-6">
+                        <div className="space-y-6 print:hidden">
                             {/* Weekly Compliance Automation */}
                             <div className="bg-indigo-50 rounded-2xl p-6 border border-indigo-100 shadow-sm">
                                 <h3 className="font-bold text-indigo-900 text-lg flex items-center gap-2 mb-2">
@@ -513,9 +553,13 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-fade-in p-8">
                         {/* Report Header for Print */}
                         <div className="mb-8 border-b border-slate-200 pb-6 flex justify-between items-start">
-                            <div>
-                                <h1 className="text-3xl font-bold text-slate-800">Sacco Financial Report</h1>
-                                <p className="text-slate-500 mt-1">Generated on: {new Date(reportData.generated_at).toLocaleString()}</p>
+                            <div className="flex gap-4 items-center">
+                                {/* NEW: Logo in Report Header */}
+                                {logo && <img src={logo} alt="Logo" className="h-20 w-auto object-contain print:block hidden" />}
+                                <div>
+                                    <h1 className="text-3xl font-bold text-slate-800">{saccoName} Financial Report</h1>
+                                    <p className="text-slate-500 mt-1">Generated on: {new Date(reportData.generated_at).toLocaleString()}</p>
+                                </div>
                             </div>
                             <button onClick={handlePrintReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-700 print:hidden">
                                 <Printer size={18} /> Print Report

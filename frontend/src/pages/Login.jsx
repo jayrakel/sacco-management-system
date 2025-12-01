@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api'; 
 import { ShieldCheck, Lock, Mail, ChevronRight } from 'lucide-react';
@@ -8,7 +8,29 @@ export default function Login({ setUser }) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [logo, setLogo] = useState(null); 
+  const [saccoName, setSaccoName] = useState('SecureSacco'); // Default Name
+
   const navigate = useNavigate();
+
+  // Fetch Branding (Logo + Name) from Public Endpoint
+  useEffect(() => {
+    const fetchBranding = async () => {
+      try {
+        const res = await api.get('/api/settings/branding');
+        
+        const logoData = res.data.find(s => s.setting_key === 'sacco_logo');
+        if (logoData && logoData.setting_value) setLogo(logoData.setting_value);
+
+        const nameData = res.data.find(s => s.setting_key === 'sacco_name');
+        if (nameData && nameData.setting_value) setSaccoName(nameData.setting_value);
+
+      } catch (err) {
+        console.warn("Could not load branding", err);
+      }
+    };
+    fetchBranding();
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -46,7 +68,8 @@ export default function Login({ setUser }) {
           <div className="bg-emerald-500/20 p-6 rounded-full inline-block mb-8 backdrop-blur-sm">
             <ShieldCheck size={64} className="text-emerald-400" />
           </div>
-          <h1 className="text-5xl font-bold mb-6">SecureSacco</h1>
+          {/* Dynamic Name */}
+          <h1 className="text-5xl font-bold mb-6">{saccoName}</h1>
           <p className="text-slate-400 text-xl max-w-md mx-auto leading-relaxed">
             Empowering members with transparent, automated, and secure financial growth.
           </p>
@@ -57,6 +80,14 @@ export default function Login({ setUser }) {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="w-full max-w-md">
           <div className="bg-white p-10 rounded-2xl shadow-xl border border-slate-100">
+            
+            {/* Logo Display */}
+            {logo && (
+              <div className="flex justify-center mb-6">
+                <img src={logo} alt="Organization Logo" className="h-20 w-auto object-contain" />
+              </div>
+            )}
+
             <h2 className="text-3xl font-bold text-slate-800 mb-2">Welcome Back</h2>
             <p className="text-slate-500 mb-8">Please enter your credentials to access your account.</p>
 
@@ -98,7 +129,7 @@ export default function Login({ setUser }) {
               </button>
             </form>
           </div>
-          <p className="text-center text-slate-400 text-sm mt-8">© 2025 SecureSacco System</p>
+          <p className="text-center text-slate-400 text-sm mt-8">© 2025 {saccoName} System</p>
         </div>
       </div>
     </div>

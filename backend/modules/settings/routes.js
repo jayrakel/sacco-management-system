@@ -3,7 +3,19 @@ const router = express.Router();
 const db = require('../../db');
 const { authenticateUser } = require('../auth/middleware');
 
-// GET ALL SETTINGS
+// --- NEW: Public Branding Route (No Auth Required) ---
+router.get('/branding', async (req, res) => {
+    try {
+        // Updated to fetch sacco_name as well
+        const result = await db.query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('sacco_logo', 'sacco_favicon', 'sacco_name')");
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Branding fetch failed", err);
+        res.status(500).json({ error: "Failed to fetch branding" });
+    }
+});
+
+// GET ALL SETTINGS (Authenticated)
 router.get('/', authenticateUser, async (req, res) => {
     try {
         // Now fetching 'category' column as well

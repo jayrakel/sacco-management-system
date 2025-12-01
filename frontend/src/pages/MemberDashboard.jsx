@@ -16,6 +16,8 @@ import {
   Vote,
   ThumbsUp,
   ThumbsDown,
+  Printer, // Added
+  FileText // Added
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -44,6 +46,7 @@ export default function MemberDashboard({ user, onLogout }) {
 
   // System Settings (Dynamic)
   const [multiplier, setMultiplier] = useState(3); // Default to 3
+  const [logo, setLogo] = useState(null); // Logo State
 
   // Forms
   const [loanForm, setLoanForm] = useState({
@@ -89,6 +92,10 @@ export default function MemberDashboard({ user, onLogout }) {
             (s) => s.setting_key === "loan_multiplier"
           );
           if (multSetting) setMultiplier(parseFloat(multSetting.setting_value));
+
+          // Fetch Logo
+          const logoSetting = settingsRes.data.find((s) => s.setting_key === "sacco_logo");
+          if (logoSetting) setLogo(logoSetting.setting_value);
         }
 
         const loan = loanRes.data;
@@ -248,11 +255,15 @@ export default function MemberDashboard({ user, onLogout }) {
     }
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-12 relative">
       {toast && (
         <div
-          className={`fixed bottom-6 right-6 z-50 p-4 rounded-xl shadow-xl border flex items-center gap-3 animate-slide-in bg-white ${
+          className={`fixed bottom-6 right-6 z-50 p-4 rounded-xl shadow-xl border flex items-center gap-3 animate-slide-in bg-white print:hidden ${
             toast.type === "success"
               ? "text-emerald-600 border-emerald-100"
               : "text-red-600 border-red-100"
@@ -263,11 +274,13 @@ export default function MemberDashboard({ user, onLogout }) {
         </div>
       )}
 
-      <DashboardHeader user={user} onLogout={onLogout} title="Member Portal" />
+      <div className="print:hidden">
+        <DashboardHeader user={user} onLogout={onLogout} title="Member Portal" />
+      </div>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8">
-        {/* Top Stats Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 print:mt-0 print:max-w-none">
+        {/* Top Stats Row - Hidden in Print */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 print:hidden">
           <div className="md:col-span-2 bg-slate-900 rounded-2xl p-8 text-white shadow-2xl shadow-slate-200 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10">
               <PiggyBank size={120} />
@@ -383,7 +396,7 @@ export default function MemberDashboard({ user, onLogout }) {
         </div>
 
         {activeTab === "deposit" && (
-          <div className="bg-white rounded-2xl shadow-lg border border-emerald-100 p-8 max-w-2xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg border border-emerald-100 p-8 max-w-2xl mx-auto print:hidden">
             <h2 className="text-2xl font-bold mb-4">Deposit Funds</h2>
             <form onSubmit={handleDeposit} className="space-y-4">
               <input
@@ -417,7 +430,7 @@ export default function MemberDashboard({ user, onLogout }) {
           </div>
         )}
         {activeTab === "repay" && (
-          <div className="bg-white rounded-2xl shadow-lg border border-blue-100 p-8 max-w-2xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg border border-blue-100 p-8 max-w-2xl mx-auto print:hidden">
             <h2 className="text-2xl font-bold mb-4">Loan Repayment</h2>
             <form onSubmit={handleRepayment} className="space-y-4">
               <input
@@ -450,396 +463,466 @@ export default function MemberDashboard({ user, onLogout }) {
 
         {activeTab === "dashboard" && (
           <div className="space-y-6">
-            <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-              <CreditCard className="text-blue-500" /> Loan Application Status
-            </h3>
-            {loanState.status === "LOADING" && (
-              <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-100 border-dashed">
-                Loading...
-              </div>
-            )}
-
-            {/* DYNAMIC SETTING USED HERE */}
-            {loanState.status === "NO_APP" && (
-              <div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
-                <div>
-                  <h4 className="text-2xl font-bold">Apply for Loan</h4>
-                  <p>
-                    Get up to{" "}
-                    <span className="font-bold text-yellow-300">
-                      {multiplier}x
-                    </span>{" "}
-                    savings.
-                  </p>
+            
+            {/* WRAPPER: Hide all loan status cards in Print Mode */}
+            <div className="print:hidden space-y-6">
+                <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <CreditCard className="text-blue-500" /> Loan Application Status
+                </h3>
+                {loanState.status === "LOADING" && (
+                <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-100 border-dashed">
+                    Loading...
                 </div>
-                <button
-                  onClick={handleLoanStart}
-                  className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold"
-                >
-                  Start Application
-                </button>
-              </div>
-            )}
+                )}
 
-            {loanState.status === "FEE_PENDING" && (
-              <div className="bg-white rounded-2xl shadow-sm border-l-4 border-amber-500 p-8 flex items-center justify-between">
-                <div>
-                  <h4 className="text-lg font-bold">Fee Required</h4>
-                  <p className="text-slate-500">Pay KES 500 to proceed.</p>
-                </div>
-                <button
-                  onClick={handleLoanFeePayment}
-                  disabled={loading}
-                  className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold text-sm"
-                >
-                  Pay Fee
-                </button>
-              </div>
-            )}
-
-            {loanState.status === "FEE_PAID" && (
-              <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-                <h4 className="text-lg font-bold text-slate-800 mb-6">
-                  Loan Details
-                </h4>
-                <form
-                  onSubmit={handleLoanSubmit}
-                  className="space-y-4 max-w-xl"
-                >
-                  <div>
-                    <input
-                      type="number"
-                      required
-                      className="w-full border p-3 rounded-xl bg-slate-50"
-                      placeholder="Amount"
-                      value={loanForm.amount}
-                      onChange={(e) =>
-                        setLoanForm({ ...loanForm, amount: e.target.value })
-                      }
-                    />
-                    <p className="text-xs text-slate-400 mt-1">
-                      Max limit: KES{" "}
-                      {(savings.balance * multiplier).toLocaleString()}
+                {/* DYNAMIC SETTING USED HERE */}
+                {loanState.status === "NO_APP" && (
+                <div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6">
+                    <div>
+                    <h4 className="text-2xl font-bold">Apply for Loan</h4>
+                    <p>
+                        Get up to{" "}
+                        <span className="font-bold text-yellow-300">
+                        {multiplier}x
+                        </span>{" "}
+                        savings.
                     </p>
-                  </div>
-                  <input
-                    type="number"
-                    required
-                    className="w-full border p-3 rounded-xl bg-slate-50"
-                    placeholder="Weeks"
-                    value={loanForm.repaymentWeeks}
-                    onChange={(e) =>
-                      setLoanForm({
-                        ...loanForm,
-                        repaymentWeeks: e.target.value,
-                      })
-                    }
-                  />
-                  <textarea
-                    required
-                    rows="3"
-                    className="w-full border p-3 rounded-xl bg-slate-50"
-                    placeholder="Purpose"
-                    value={loanForm.purpose}
-                    onChange={(e) =>
-                      setLoanForm({ ...loanForm, purpose: e.target.value })
-                    }
-                  />
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
-                  >
-                    Next: Add Guarantors
-                  </button>
-                </form>
-              </div>
-            )}
-
-            {/* --- GUARANTOR UI (My Loan) --- */}
-            {loanState.status === "PENDING_GUARANTORS" && (
-              <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-                <div className="mb-8 pb-6 border-b border-slate-100">
-                  <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <UserPlus className="text-blue-600" /> Add Guarantors
-                  </h4>
-                  <p className="text-slate-500 text-sm mt-1">
-                    Search for members to guarantee your loan. At least 1
-                    accepted request is required.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
-                      Search Members
-                    </label>
-                    <div className="relative">
-                      <Search
-                        className="absolute left-3 top-3 text-slate-400"
-                        size={18}
-                      />
-                      <input
-                        type="text"
-                        className="w-full pl-10 p-3 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white transition"
-                        placeholder="Type name..."
-                        value={searchQuery}
-                        onChange={handleSearch}
-                      />
-                      {searchResults.length > 0 && (
-                        <div className="absolute top-full mt-2 left-0 w-full bg-white shadow-xl rounded-xl border border-slate-100 overflow-hidden z-10">
-                          {searchResults.map((r) => (
-                            <button
-                              key={r.id}
-                              onClick={() => addGuarantor(r.id)}
-                              className="w-full text-left p-3 hover:bg-blue-50 flex justify-between items-center"
-                            >
-                              <span className="font-bold text-slate-700">
-                                {r.full_name}
-                              </span>
-                              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">
-                                Request
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
-                      Selected Guarantors
-                    </label>
-                    {guarantors.length === 0 ? (
-                      <div className="p-4 border border-dashed border-slate-200 rounded-xl text-center text-slate-400 text-sm">
-                        No guarantors added yet.
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {guarantors.map((g) => (
-                          <div
-                            key={g.id}
-                            className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100"
-                          >
-                            <span className="font-bold text-slate-700 text-sm">
-                              {g.full_name}
-                            </span>
-                            {g.status === "PENDING" && (
-                              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-bold flex items-center gap-1">
-                                <Clock size={12} /> Pending
-                              </span>
-                            )}
-                            {g.status === "ACCEPTED" && (
-                              <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded font-bold flex items-center gap-1">
-                                <UserCheck size={12} /> Accepted
-                              </span>
-                            )}
-                            {g.status === "DECLINED" && (
-                              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-bold flex items-center gap-1">
-                                <UserX size={12} /> Declined
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                     <button
-                      onClick={handleFinalSubmit}
-                      disabled={
-                        guarantors.filter((g) => g.status === "ACCEPTED")
-                          .length < 1
-                      }
-                      className="w-full mt-6 bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold transition shadow-lg disabled:shadow-none"
+                    onClick={handleLoanStart}
+                    className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold"
                     >
-                      Final Submit for Review
+                    Start Application
                     </button>
-                  </div>
                 </div>
-              </div>
-            )}
+                )}
 
-            {/* UPDATED: Handle both SUBMITTED and VERIFIED states */}
-            {['SUBMITTED', 'VERIFIED'].includes(loanState.status) && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-blue-100 text-center">
-                <Clock
-                  size={40}
-                  className="mx-auto text-blue-500 mb-4 animate-pulse"
-                />
-                <h3 className="text-2xl font-bold">Under Review</h3>
-                <p className="text-slate-500 mb-2">
-                    {loanState.status === 'SUBMITTED' 
-                        ? "Waiting for Credit Officer Appraisal..." 
-                        : "Verified! Waiting for Secretary to Table."}
-                </p>
-                <div className="flex justify-center gap-2 mt-4">
-                    <div className={`h-2 w-8 rounded-full ${loanState.status === 'SUBMITTED' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
-                    <div className={`h-2 w-8 rounded-full ${loanState.status === 'VERIFIED' ? 'bg-blue-500' : 'bg-slate-200'}`}></div>
-                    <div className="h-2 w-8 rounded-full bg-slate-200"></div>
+                {loanState.status === "FEE_PENDING" && (
+                <div className="bg-white rounded-2xl shadow-sm border-l-4 border-amber-500 p-8 flex items-center justify-between">
+                    <div>
+                    <h4 className="text-lg font-bold">Fee Required</h4>
+                    <p className="text-slate-500">Pay KES 500 to proceed.</p>
+                    </div>
+                    <button
+                    onClick={handleLoanFeePayment}
+                    disabled={loading}
+                    className="bg-slate-900 hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-bold text-sm"
+                    >
+                    Pay Fee
+                    </button>
                 </div>
-              </div>
-            )}
+                )}
 
-            {loanState.status === "TABLED" && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center">
-                <Vote size={40} className="mx-auto text-purple-500 mb-4" />
-                <h3 className="text-2xl font-bold">Tabled</h3>
-                <p>Application is tabled for the upcoming meeting.</p>
-              </div>
-            )}
-            {loanState.status === "VOTING" && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center">
-                <ThumbsUp
-                  size={40}
-                  className="mx-auto text-purple-500 mb-4 animate-bounce"
-                />
-                <h3 className="text-2xl font-bold text-purple-900">
-                  Voting in Progress
-                </h3>
-                <p className="text-slate-500">
-                  Members are currently voting on your application.
-                </p>
-              </div>
-            )}
-            {loanState.status === "APPROVED" && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-emerald-100 text-center">
-                <CheckCircle
-                  size={40}
-                  className="mx-auto text-emerald-500 mb-4"
-                />
-                <h3 className="text-2xl font-bold text-emerald-700">
-                  Approved!
-                </h3>
-                <p className="text-slate-500">
-                  Disbursement pending from Treasurer.
-                </p>
-              </div>
-            )}
-            {loanState.status === "REJECTED" && (
-              <div className="bg-white p-10 rounded-2xl shadow-sm border border-red-100 text-center">
-                <AlertCircle size={40} className="mx-auto text-red-500 mb-4" />
-                <h3 className="text-2xl font-bold text-red-700">Rejected</h3>
-                <p className="text-slate-500">
-                  Your loan application was not approved.
-                </p>
-                <button
-                  onClick={handleLoanStart}
-                  className="mt-4 text-blue-600 underline"
-                >
-                  Try Again
-                </button>
-              </div>
-            )}
+                {loanState.status === "FEE_PAID" && (
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+                    <h4 className="text-lg font-bold text-slate-800 mb-6">
+                    Loan Details
+                    </h4>
+                    <form
+                    onSubmit={handleLoanSubmit}
+                    className="space-y-4 max-w-xl"
+                    >
+                    <div>
+                        <input
+                        type="number"
+                        required
+                        className="w-full border p-3 rounded-xl bg-slate-50"
+                        placeholder="Amount"
+                        value={loanForm.amount}
+                        onChange={(e) =>
+                            setLoanForm({ ...loanForm, amount: e.target.value })
+                        }
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                        Max limit: KES{" "}
+                        {(savings.balance * multiplier).toLocaleString()}
+                        </p>
+                    </div>
+                    <input
+                        type="number"
+                        required
+                        className="w-full border p-3 rounded-xl bg-slate-50"
+                        placeholder="Weeks"
+                        value={loanForm.repaymentWeeks}
+                        onChange={(e) =>
+                        setLoanForm({
+                            ...loanForm,
+                            repaymentWeeks: e.target.value,
+                        })
+                        }
+                    />
+                    <textarea
+                        required
+                        rows="3"
+                        className="w-full border p-3 rounded-xl bg-slate-50"
+                        placeholder="Purpose"
+                        value={loanForm.purpose}
+                        onChange={(e) =>
+                        setLoanForm({ ...loanForm, purpose: e.target.value })
+                        }
+                    />
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold"
+                    >
+                        Next: Add Guarantors
+                    </button>
+                    </form>
+                </div>
+                )}
 
-            {loanState.status === 'ACTIVE' && (
-                    <div className="space-y-6">
-                        {/* 1. MAIN REPAYMENT CARD */}
-                        <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-                            <div className="p-6 bg-indigo-900 text-white flex justify-between items-center">
-                                <div>
-                                    <p className="text-indigo-200 text-xs uppercase font-bold">Current Loan Status</p>
-                                    <h3 className="text-2xl font-bold">Active Repayment</h3>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-xs text-indigo-300 uppercase">Week</p>
-                                    <p className="text-xl font-bold font-mono">
-                                        {loanState.schedule?.weeks_passed || 0} <span className="text-indigo-400 text-sm">/ {loanState.repayment_weeks}</span>
-                                    </p>
-                                </div>
+                {/* --- GUARANTOR UI (My Loan) --- */}
+                {loanState.status === "PENDING_GUARANTORS" && (
+                <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+                    <div className="mb-8 pb-6 border-b border-slate-100">
+                    <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <UserPlus className="text-blue-600" /> Add Guarantors
+                    </h4>
+                    <p className="text-slate-500 text-sm mt-1">
+                        Search for members to guarantee your loan. At least 1
+                        accepted request is required.
+                    </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                        Search Members
+                        </label>
+                        <div className="relative">
+                        <Search
+                            className="absolute left-3 top-3 text-slate-400"
+                            size={18}
+                        />
+                        <input
+                            type="text"
+                            className="w-full pl-10 p-3 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white transition"
+                            placeholder="Type name..."
+                            value={searchQuery}
+                            onChange={handleSearch}
+                        />
+                        {searchResults.length > 0 && (
+                            <div className="absolute top-full mt-2 left-0 w-full bg-white shadow-xl rounded-xl border border-slate-100 overflow-hidden z-10">
+                            {searchResults.map((r) => (
+                                <button
+                                key={r.id}
+                                onClick={() => addGuarantor(r.id)}
+                                className="w-full text-left p-3 hover:bg-blue-50 flex justify-between items-center"
+                                >
+                                <span className="font-bold text-slate-700">
+                                    {r.full_name}
+                                </span>
+                                <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">
+                                    Request
+                                </span>
+                                </button>
+                            ))}
                             </div>
+                        )}
+                        </div>
+                    </div>
 
-                            <div className="p-8">
-                                {/* Running Balance Indicator */}
-                                {loanState.schedule && (
-                                    <div className={`mb-8 p-4 rounded-xl border-l-4 ${
-                                        loanState.schedule.running_balance < 0 ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'
-                                    }`}>
-                                        <div className="flex justify-between items-center">
-                                            <div>
-                                                <p className={`text-sm font-bold uppercase ${
-                                                    loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
-                                                }`}>
-                                                    {loanState.schedule.running_balance < 0 ? 'Outstanding Arrears' : 'Pre-Payment Credit'}
-                                                </p>
-                                                <p className="text-xs text-slate-500 mt-1">
-                                                    {loanState.schedule.running_balance < 0 
-                                                        ? "You are behind schedule. Please pay immediately to clear arrears."
-                                                        : "Great job! You are ahead of your repayment schedule."}
-                                                </p>
-                                            </div>
-                                            <div className="text-right">
-                                                <span className={`text-2xl font-bold font-mono ${
-                                                    loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
-                                                }`}>
-                                                    {loanState.schedule.running_balance < 0 ? '-' : '+'} 
-                                                    KES {Math.abs(loanState.schedule.running_balance).toLocaleString()}
-                                                </span>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">
+                        Selected Guarantors
+                        </label>
+                        {guarantors.length === 0 ? (
+                        <div className="p-4 border border-dashed border-slate-200 rounded-xl text-center text-slate-400 text-sm">
+                            No guarantors added yet.
+                        </div>
+                        ) : (
+                        <div className="space-y-2">
+                            {guarantors.map((g) => (
+                            <div
+                                key={g.id}
+                                className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100"
+                            >
+                                <span className="font-bold text-slate-700 text-sm">
+                                {g.full_name}
+                                </span>
+                                {g.status === "PENDING" && (
+                                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded font-bold flex items-center gap-1">
+                                    <Clock size={12} /> Pending
+                                </span>
+                                )}
+                                {g.status === "ACCEPTED" && (
+                                <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded font-bold flex items-center gap-1">
+                                    <UserCheck size={12} /> Accepted
+                                </span>
+                                )}
+                                {g.status === "DECLINED" && (
+                                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-bold flex items-center gap-1">
+                                    <UserX size={12} /> Declined
+                                </span>
+                                )}
+                            </div>
+                            ))}
+                        </div>
+                        )}
+                        <button
+                        onClick={handleFinalSubmit}
+                        disabled={
+                            guarantors.filter((g) => g.status === "ACCEPTED")
+                            .length < 1
+                        }
+                        className="w-full mt-6 bg-blue-600 disabled:bg-slate-300 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold transition shadow-lg disabled:shadow-none"
+                        >
+                        Final Submit for Review
+                        </button>
+                    </div>
+                    </div>
+                </div>
+                )}
+
+                {/* UPDATED: Handle both SUBMITTED and VERIFIED states */}
+                {['SUBMITTED', 'VERIFIED'].includes(loanState.status) && (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-blue-100 text-center">
+                    <Clock
+                    size={40}
+                    className="mx-auto text-blue-500 mb-4 animate-pulse"
+                    />
+                    <h3 className="text-2xl font-bold">Under Review</h3>
+                    <p className="text-slate-500 mb-2">
+                        {loanState.status === 'SUBMITTED' 
+                            ? "Waiting for Credit Officer Appraisal..." 
+                            : "Verified! Waiting for Secretary to Table."}
+                    </p>
+                    <div className="flex justify-center gap-2 mt-4">
+                        <div className={`h-2 w-8 rounded-full ${loanState.status === 'SUBMITTED' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
+                        <div className={`h-2 w-8 rounded-full ${loanState.status === 'VERIFIED' ? 'bg-blue-500' : 'bg-slate-200'}`}></div>
+                        <div className="h-2 w-8 rounded-full bg-slate-200"></div>
+                    </div>
+                </div>
+                )}
+
+                {loanState.status === "TABLED" && (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center">
+                    <Vote size={40} className="mx-auto text-purple-500 mb-4" />
+                    <h3 className="text-2xl font-bold">Tabled</h3>
+                    <p>Application is tabled for the upcoming meeting.</p>
+                </div>
+                )}
+                {loanState.status === "VOTING" && (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-purple-100 text-center">
+                    <ThumbsUp
+                    size={40}
+                    className="mx-auto text-purple-500 mb-4 animate-bounce"
+                    />
+                    <h3 className="text-2xl font-bold text-purple-900">
+                    Voting in Progress
+                    </h3>
+                    <p className="text-slate-500">
+                    Members are currently voting on your application.
+                    </p>
+                </div>
+                )}
+                {loanState.status === "APPROVED" && (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-emerald-100 text-center">
+                    <CheckCircle
+                    size={40}
+                    className="mx-auto text-emerald-500 mb-4"
+                    />
+                    <h3 className="text-2xl font-bold text-emerald-700">
+                    Approved!
+                    </h3>
+                    <p className="text-slate-500">
+                    Disbursement pending from Treasurer.
+                    </p>
+                </div>
+                )}
+                {loanState.status === "REJECTED" && (
+                <div className="bg-white p-10 rounded-2xl shadow-sm border border-red-100 text-center">
+                    <AlertCircle size={40} className="mx-auto text-red-500 mb-4" />
+                    <h3 className="text-2xl font-bold text-red-700">Rejected</h3>
+                    <p className="text-slate-500">
+                    Your loan application was not approved.
+                    </p>
+                    <button
+                    onClick={handleLoanStart}
+                    className="mt-4 text-blue-600 underline"
+                    >
+                    Try Again
+                    </button>
+                </div>
+                )}
+
+                {loanState.status === 'ACTIVE' && (
+                        <div className="space-y-6">
+                            {/* 1. MAIN REPAYMENT CARD */}
+                            <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                                <div className="p-6 bg-indigo-900 text-white flex justify-between items-center">
+                                    <div>
+                                        <p className="text-indigo-200 text-xs uppercase font-bold">Current Loan Status</p>
+                                        <h3 className="text-2xl font-bold">Active Repayment</h3>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xs text-indigo-300 uppercase">Week</p>
+                                        <p className="text-xl font-bold font-mono">
+                                            {loanState.schedule?.weeks_passed || 0} <span className="text-indigo-400 text-sm">/ {loanState.repayment_weeks}</span>
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="p-8">
+                                    {/* Running Balance Indicator */}
+                                    {loanState.schedule && (
+                                        <div className={`mb-8 p-4 rounded-xl border-l-4 ${
+                                            loanState.schedule.running_balance < 0 ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'
+                                        }`}>
+                                            <div className="flex justify-between items-center">
+                                                <div>
+                                                    <p className={`text-sm font-bold uppercase ${
+                                                        loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
+                                                    }`}>
+                                                        {loanState.schedule.running_balance < 0 ? 'Outstanding Arrears' : 'Pre-Payment Credit'}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500 mt-1">
+                                                        {loanState.schedule.running_balance < 0 
+                                                            ? "You are behind schedule. Please pay immediately to clear arrears."
+                                                            : "Great job! You are ahead of your repayment schedule."}
+                                                    </p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <span className={`text-2xl font-bold font-mono ${
+                                                        loanState.schedule.running_balance < 0 ? 'text-red-600' : 'text-emerald-600'
+                                                    }`}>
+                                                        {loanState.schedule.running_balance < 0 ? '-' : '+'} 
+                                                        KES {Math.abs(loanState.schedule.running_balance).toLocaleString()}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                                {/* Stats Grid */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Loan Due</p>
-                                        <p className="text-lg font-bold text-slate-800">KES {loanState.total_due?.toLocaleString()}</p>
+                                    {/* Stats Grid */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Loan Due</p>
+                                            <p className="text-lg font-bold text-slate-800">KES {loanState.total_due?.toLocaleString()}</p>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Repaid</p>
+                                            <p className="text-lg font-bold text-emerald-600">KES {loanState.amount_repaid.toLocaleString()}</p>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Weekly Installment</p>
+                                            <p className="text-lg font-bold text-indigo-600">KES {Math.ceil(loanState.schedule?.weekly_installment || 0).toLocaleString()}</p>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Balance Left</p>
+                                            <p className="text-lg font-bold text-red-600">KES {(loanState.total_due - loanState.amount_repaid).toLocaleString()}</p>
+                                        </div>
                                     </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total Repaid</p>
-                                        <p className="text-lg font-bold text-emerald-600">KES {loanState.amount_repaid.toLocaleString()}</p>
+
+                                    {/* Progress Bar */}
+                                    <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden mb-8">
+                                        <div 
+                                            className="absolute top-0 left-0 h-full bg-emerald-500 transition-all duration-1000 ease-out"
+                                            style={{ width: `${Math.min(100, (loanState.amount_repaid / loanState.total_due) * 100)}%` }}
+                                        ></div>
+                                        {/* Expected Marker */}
+                                        <div 
+                                            className="absolute top-0 w-1 h-full bg-black/20 z-10"
+                                            style={{ left: `${Math.min(100, (loanState.schedule?.expected_to_date / loanState.total_due) * 100)}%` }}
+                                            title="Expected Progress"
+                                        ></div>
                                     </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Weekly Installment</p>
-                                        <p className="text-lg font-bold text-indigo-600">KES {Math.ceil(loanState.schedule?.weekly_installment || 0).toLocaleString()}</p>
-                                    </div>
-                                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-center">
-                                        <p className="text-xs font-bold text-slate-400 uppercase mb-1">Balance Left</p>
-                                        <p className="text-lg font-bold text-red-600">KES {(loanState.total_due - loanState.amount_repaid).toLocaleString()}</p>
-                                    </div>
+
+                                    <button 
+                                        onClick={() => setActiveTab('repay')} 
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 transition flex items-center justify-center gap-2"
+                                    >
+                                        <Banknote size={20}/> Make Weekly Installment
+                                    </button>
                                 </div>
-
-                                {/* Progress Bar */}
-                                <div className="relative h-4 bg-slate-100 rounded-full overflow-hidden mb-8">
-                                    <div 
-                                        className="absolute top-0 left-0 h-full bg-emerald-500 transition-all duration-1000 ease-out"
-                                        style={{ width: `${Math.min(100, (loanState.amount_repaid / loanState.total_due) * 100)}%` }}
-                                    ></div>
-                                    {/* Expected Marker */}
-                                    <div 
-                                        className="absolute top-0 w-1 h-full bg-black/20 z-10"
-                                        style={{ left: `${Math.min(100, (loanState.schedule?.expected_to_date / loanState.total_due) * 100)}%` }}
-                                        title="Expected Progress"
-                                    ></div>
-                                </div>
-
-                                <button 
-                                    onClick={() => setActiveTab('repay')} 
-                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-indigo-100 transition flex items-center justify-center gap-2"
-                                >
-                                    <Banknote size={20}/> Make Weekly Installment
-                                </button>
                             </div>
                         </div>
-                    </div>
+                    )}
+                {loanState.status === "COMPLETED" && (
+                <div className="bg-emerald-50 p-10 rounded-2xl text-center border border-emerald-100">
+                    <CheckCircle
+                    size={40}
+                    className="mx-auto text-emerald-500 mb-4"
+                    />
+                    <h3 className="text-2xl font-bold text-emerald-900">
+                    Loan Repaid!
+                    </h3>
+                    <button
+                    onClick={handleLoanStart}
+                    className="mt-6 bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold"
+                    >
+                    Apply New Loan
+                    </button>
+                </div>
                 )}
-            {loanState.status === "COMPLETED" && (
-              <div className="bg-emerald-50 p-10 rounded-2xl text-center border border-emerald-100">
-                <CheckCircle
-                  size={40}
-                  className="mx-auto text-emerald-500 mb-4"
-                />
-                <h3 className="text-2xl font-bold text-emerald-900">
-                  Loan Repaid!
-                </h3>
-                <button
-                  onClick={handleLoanStart}
-                  className="mt-6 bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold"
-                >
-                  Apply New Loan
-                </button>
+            </div>
+
+            {/* --- RECENT TRANSACTIONS (Restored) --- */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print:border-none print:shadow-none">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 print:bg-white print:border-b-2 print:border-black">
+                  <div className="flex items-center gap-3">
+                      {/* Logo in Print Mode */}
+                      {logo && <img src={logo} alt="Logo" className="h-12 w-auto object-contain hidden print:block" />}
+                      <div>
+                          <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                              <FileText size={18} className="text-slate-400 print:hidden"/> 
+                              {/* Print-friendly Title */}
+                              <span className="print:hidden">Contribution History</span>
+                              <span className="hidden print:inline">Account Statement</span>
+                          </h3>
+                          <p className="text-xs text-slate-500 hidden print:block">Generated for {user.name} on {new Date().toLocaleDateString()}</p>
+                      </div>
+                  </div>
+                  <button onClick={handlePrint} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-lg transition print:hidden">
+                      <Printer size={16}/> Print Statement
+                  </button>
               </div>
-            )}
+
+              {savings.history.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 flex flex-col items-center">
+                      <AlertCircle size={48} className="mb-4 opacity-20"/>
+                      <p>No contributions found.</p>
+                  </div>
+              ) : (
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                          <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs print:bg-white print:text-black print:border-b">
+                              <tr>
+                                  <th className="px-6 py-4">Date</th>
+                                  <th className="px-6 py-4">Reference</th>
+                                  <th className="px-6 py-4">Type</th>
+                                  <th className="px-6 py-4 text-right">Amount</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                              {savings.history.map((t) => (
+                                  <tr key={t.id} className="hover:bg-slate-50 print:hover:bg-transparent">
+                                      <td className="px-6 py-4 text-slate-600">{new Date(t.created_at).toLocaleDateString()}</td>
+                                      <td className="px-6 py-4 font-mono text-xs text-slate-500">{t.transaction_ref || '-'}</td>
+                                      <td className="px-6 py-4">
+                                          <span className={`px-2 py-1 rounded-full text-[10px] font-bold print:border print:border-slate-300 ${
+                                              t.type === 'DEPOSIT' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                          }`}>
+                                              {t.type}
+                                          </span>
+                                      </td>
+                                      <td className={`px-6 py-4 text-right font-bold font-mono ${
+                                          t.type === 'DEPOSIT' ? 'text-emerald-600' : 'text-slate-600'
+                                      }`}>
+                                          {t.type === 'DEPOSIT' ? '+' : '-'} {parseFloat(t.amount).toLocaleString()}
+                                      </td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+              )}
+              <div className="hidden print:block mt-8 text-center text-xs text-slate-400 border-t pt-4">
+                  <p>End of Statement • System Generated</p>
+              </div>
+            </div>
+
           </div>
         )}
       </main>

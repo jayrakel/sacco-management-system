@@ -5,6 +5,7 @@ import { Wallet, LogOut, Bell, Archive, XCircle, AlertCircle, MailOpen, Handshak
 export default function DashboardHeader({ user, onLogout, title = "SaccoPortal" }) {
     const [notifications, setNotifications] = useState({ unread: [], history: [], archive: [] });
     const [requests, setRequests] = useState([]);
+    const [logo, setLogo] = useState(null); // NEW: Logo State
     const [showNotifDropdown, setShowNotifDropdown] = useState(false);
     const [showReqDropdown, setShowReqDropdown] = useState(false);
     const [showArchive, setShowArchive] = useState(false);
@@ -22,7 +23,7 @@ export default function DashboardHeader({ user, onLogout, title = "SaccoPortal" 
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // Poll Notifications & Requests
+    // Poll Notifications & Requests & Fetch Logo
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -35,6 +36,14 @@ export default function DashboardHeader({ user, onLogout, title = "SaccoPortal" 
                 // 2. Guarantor Requests
                 const reqRes = await api.get('/api/loan/guarantors/requests');
                 setRequests(reqRes.data);
+
+                // 3. NEW: Fetch System Logo
+                const settingRes = await api.get('/api/settings');
+                const logoSetting = settingRes.data.find(s => s.setting_key === 'sacco_logo');
+                if (logoSetting && logoSetting.setting_value) {
+                    setLogo(logoSetting.setting_value);
+                }
+
             } catch (err) { console.error("Fetch error", err); }
         };
         fetchData();
@@ -98,8 +107,13 @@ export default function DashboardHeader({ user, onLogout, title = "SaccoPortal" 
             {/* --- NAVBAR --- */}
             <nav className="bg-white border-b border-slate-200 px-4 sm:px-6 py-4 flex justify-between items-center sticky top-0 z-40">
                 <div className="flex items-center gap-3">
-                    <div className="bg-emerald-600 text-white p-2 rounded-lg shadow-lg"><Wallet size={20} /></div>
-                    <span className="font-bold text-xl hidden sm:block">{title}</span>
+                    {/* NEW: Logo Logic */}
+                    {logo ? (
+                        <img src={logo} alt="Logo" className="h-10 w-auto object-contain" />
+                    ) : (
+                        <div className="bg-emerald-600 text-white p-2 rounded-lg shadow-lg"><Wallet size={20} /></div>
+                    )}
+                    <span className="font-bold text-xl hidden sm:block text-slate-800">{title}</span>
                 </div>
                 
                 <div className="flex items-center gap-4">

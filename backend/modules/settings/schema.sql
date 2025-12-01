@@ -1,10 +1,13 @@
 -- System Settings Table
 CREATE TABLE IF NOT EXISTS public.system_settings (
     setting_key character varying(50) PRIMARY KEY,
-    setting_value character varying(255) NOT NULL,
+    setting_value TEXT NOT NULL, -- Changed from varchar(255) to TEXT to support Base64 images
     description text,
     category character varying(20) DEFAULT 'SYSTEM' -- 'SYSTEM' or 'SACCO'
 );
+
+-- Ensure existing installations support long text (Migration)
+ALTER TABLE public.system_settings ALTER COLUMN setting_value TYPE TEXT;
 
 -- Seed Comprehensive Sacco Policies
 INSERT INTO system_settings (setting_key, setting_value, description, category)
@@ -31,7 +34,12 @@ VALUES
     ('fine_no_uniform', '50', 'Fine for not wearing official Sacco uniform/badge (KES)', 'SACCO'),
     ('fine_misconduct', '500', 'Fine for general misconduct or disruption (KES)', 'SACCO'),
     ('penalty_missed_savings', '50', 'Automatic penalty for failing to meet weekly deposit target (KES)', 'SACCO'),
-    ('penalty_arrears_rate', '10', 'Percentage penalty charged on total arrears amount (%)', 'SACCO')
+    ('penalty_arrears_rate', '10', 'Percentage penalty charged on total arrears amount (%)', 'SACCO'),
+
+    -- 5. SYSTEM BRANDING (New)
+    ('sacco_logo', '', 'Base64 string of the organization logo', 'SYSTEM'),
+    ('sacco_favicon', '', 'Base64 string of the system favicon', 'SYSTEM'),
+    ('sacco_name', 'Secure Sacco', 'Official name of the Organization', 'SYSTEM')
 
 -- Upsert Logic
 ON CONFLICT (setting_key) 

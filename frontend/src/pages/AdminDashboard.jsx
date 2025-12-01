@@ -4,7 +4,8 @@ import api from '../api';
 import { 
     Users, Gavel, CheckCircle, UserPlus, Search, 
     Shield, FileText, 
-    DollarSign, TrendingUp, Settings, ToggleLeft, ToggleRight
+    DollarSign, TrendingUp, Settings, ToggleLeft, ToggleRight,
+    Upload, Image as ImageIcon // Added Icons
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -108,13 +109,31 @@ export default function AdminDashboard({ user, onLogout }) {
             alert("Setting saved!");
         } catch (err) {
             console.error(err);
-            alert("Failed to update setting");
+            alert("Failed to update setting. Ensure file is < 10MB");
         }
     };
 
     const getSettingValue = (key) => {
         const s = settings.find(x => x.setting_key === key);
         return s ? s.setting_value : ''; 
+    };
+
+    // --- FILE UPLOAD HANDLER ---
+    const handleFileUpload = (key, e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Limit size (e.g., 2MB)
+        if (file.size > 2 * 1024 * 1024) {
+            alert("File size too large. Max 2MB.");
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            handleSettingUpdate(key, reader.result);
+        };
+        reader.readAsDataURL(file);
     };
 
     // --- RENDERERS ---
@@ -268,6 +287,75 @@ export default function AdminDashboard({ user, onLogout }) {
                 {activeTab === 'settings' && (
                     <div className="max-w-4xl mx-auto animate-fade-in space-y-6">
                         
+                        {/* SYSTEM BRANDING */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
+                            <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-2">
+                                <ImageIcon className="text-indigo-600" size={20}/>
+                                <h3 className="text-lg font-bold text-slate-800">System Branding</h3>
+                            </div>
+                            
+                            {/* NEW: Organization Name Input */}
+                            <div className="mb-8">
+                                <label className="block text-sm font-bold text-slate-700 mb-2">Organization Group Name</label>
+                                <div className="flex items-center gap-2">
+                                    <input 
+                                        type="text" 
+                                        className="w-full border border-slate-300 rounded-xl p-3 focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                                        defaultValue={getSettingValue('sacco_name')}
+                                        onBlur={(e) => handleSettingUpdate('sacco_name', e.target.value)}
+                                        placeholder="e.g. Secure Sacco"
+                                    />
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">This name will appear on the login screen, reports, and headers.</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {/* Logo Upload */}
+                                <div>
+                                    <p className="font-bold text-slate-700 mb-2">Organization Logo</p>
+                                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition relative bg-slate-50/50">
+                                        {getSettingValue('sacco_logo') ? (
+                                            <img src={getSettingValue('sacco_logo')} alt="Logo" className="h-24 object-contain mb-3" />
+                                        ) : (
+                                            <div className="h-24 w-24 bg-slate-100 rounded-full flex items-center justify-center mb-3 text-slate-300"><ImageIcon size={32}/></div>
+                                        )}
+                                        <input 
+                                            type="file" 
+                                            accept="image/*"
+                                            className="absolute inset-0 opacity-0 cursor-pointer"
+                                            onChange={(e) => handleFileUpload('sacco_logo', e)}
+                                        />
+                                        <button className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 pointer-events-none">
+                                            <Upload size={14}/> {getSettingValue('sacco_logo') ? 'Change Logo' : 'Upload Logo'}
+                                        </button>
+                                        <p className="text-[10px] text-slate-400 mt-2">Recommended: PNG/JPG (Max 2MB)</p>
+                                    </div>
+                                </div>
+
+                                {/* Favicon Upload */}
+                                <div>
+                                    <p className="font-bold text-slate-700 mb-2">System Favicon</p>
+                                    <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition relative bg-slate-50/50">
+                                        {getSettingValue('sacco_favicon') ? (
+                                            <img src={getSettingValue('sacco_favicon')} alt="Favicon" className="h-12 w-12 object-contain mb-3" />
+                                        ) : (
+                                            <div className="h-12 w-12 bg-slate-100 rounded-full flex items-center justify-center mb-3 text-slate-300"><ImageIcon size={20}/></div>
+                                        )}
+                                        <input 
+                                            type="file" 
+                                            accept="image/x-icon,image/png"
+                                            className="absolute inset-0 opacity-0 cursor-pointer"
+                                            onChange={(e) => handleFileUpload('sacco_favicon', e)}
+                                        />
+                                        <button className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 pointer-events-none">
+                                            <Upload size={14}/> {getSettingValue('sacco_favicon') ? 'Change Favicon' : 'Upload Favicon'}
+                                        </button>
+                                        <p className="text-[10px] text-slate-400 mt-2">Recommended: ICO/PNG 32x32</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Grace Period Section */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
                             <div className="flex justify-between items-start mb-4">
@@ -307,7 +395,8 @@ export default function AdminDashboard({ user, onLogout }) {
                             </div>
                             
                             <div className="divide-y divide-slate-100">
-                                {settings.filter(s => !['grace_period_enabled', 'default_grace_period_weeks'].includes(s.setting_key)).map((setting) => (
+                                {/* Excluded brand keys from the generic text list */}
+                                {settings.filter(s => !['grace_period_enabled', 'default_grace_period_weeks', 'sacco_logo', 'sacco_favicon', 'sacco_name'].includes(s.setting_key)).map((setting) => (
                                     <div key={setting.setting_key} className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition">
                                         <div className="flex-1">
                                             <h3 className="font-bold text-slate-800 capitalize text-sm">
