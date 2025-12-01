@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../../db');
 const { authenticateUser, requireRole } = require('../auth/middleware');
 const { validate, paymentSchema, repaymentSchema } = require('../common/validation');
+const { getSetting } = require('../settings/routes'); 
 const Joi = require('joi');
 
 // Validation for Manual Recording
@@ -14,8 +15,7 @@ const recordTransactionSchema = Joi.object({
     reference: Joi.string().required()
 });
 
-// ... (Keep existing /pay-fee and /repay-loan routes exactly as they were) ...
-// 1. PAY LOAN FORM FEE (User pays to access loan)
+// 1. PAY LOAN FORM FEE
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -30,24 +30,28 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
             return res.status(403).json({ error: "Unauthorized payment" });
         }
 
+        const feeVal = await getSetting('loan_processing_fee');
+        const feeAmount = parseFloat(feeVal) || 500;
+
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code) 
-             VALUES ($1, 'LOAN_FORM_FEE', 500, $2)`,
-            [req.user.id, mpesaRef]
+             VALUES ($1, 'LOAN_FORM_FEE', $2, $3)`,
+            [req.user.id, feeAmount, mpesaRef]
         );
 
         await client.query(
             `UPDATE loan_applications 
-             SET status='FEE_PAID', fee_transaction_ref=$1 
-             WHERE id=$2`,
-            [mpesaRef, loanAppId]
+             SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
+             WHERE id=$3`,
+            [mpesaRef, feeAmount, loanAppId]
         );
 
         await client.query('COMMIT');
-        res.json({ success: true });
+        res.json({ success: true, message: `Fee of KES ${feeAmount} paid.` });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
+        if (err.code === '23505') return res.status(400).json({ error: "Reference used." });
         res.status(500).json({ error: "Payment Failed" });
     } finally {
         client.release();
@@ -71,7 +75,7 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
         const loan = loanRes.rows[0];
 
         if (loan.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
-        if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan is not active" });
+        if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan not active" });
 
         const targetAmount = parseFloat(loan.total_due || loan.amount_requested);
         const currentPaid = parseFloat(loan.amount_repaid || 0);
@@ -106,46 +110,163 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
+        if (err.code === '23505') return res.status(400).json({ error: "Reference code used." });
         res.status(500).json({ error: "Repayment Failed" });
     } finally {
         client.release();
     }
 });
 
-// 3. RECORD MANUAL TRANSACTION
+// 3. RECORD MANUAL TRANSACTION (With Auto-Deduct from Savings)
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
-    // Allow Treasurer to record specific manual transactions if needed, or keep to Chair/Admin
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
     }
 
     const { userId, type, amount, reference, description } = req.body;
+    const client = await db.pool.connect();
 
     try {
-        const result = await db.query(
+        await client.query('BEGIN');
+
+        // A. Record the Transaction (Ledger)
+        const result = await client.query(
             `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [userId, type, amount, reference, description]
         );
 
+        // B. Handle Savings Logic
         if (type === 'DEPOSIT') {
-            await db.query(
-                `INSERT INTO deposits (user_id, amount, transaction_ref, status) 
-                 VALUES ($1, $2, $3, 'COMPLETED')`,
+            // Add to savings
+            await client.query(
+                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
                 [userId, amount, reference]
             );
+        } 
+        else if (type === 'FINE' || type === 'PENALTY') {
+            // --- AUTO-DEDUCT LOGIC ---
+            // Check current savings balance
+            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1", [userId]);
+            const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
+
+            if (currentSavings > 0) {
+                // Deduct from savings (Store as negative number)
+                // Even if they have 100 and fine is 200, we deduct 200, effectively putting them in negative/debt on shares? 
+                // Or we only deduct what they have? 
+                // Rule: We deduct full amount. If deposits go negative, it means they owe the Sacco.
+                const deductionAmount = -Math.abs(amount); 
+                const deductRef = `DEDUCT-${reference}`;
+                
+                await client.query(
+                    `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
+                     VALUES ($1, $2, 'DEDUCTION', $3, 'COMPLETED')`,
+                    [userId, deductionAmount, deductRef]
+                );
+            }
         }
 
+        await client.query('COMMIT');
         res.json({ success: true, transaction: result.rows[0] });
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error(err);
+        if (err.code === '23505') return res.status(400).json({ error: "Reference code already exists" });
         res.status(500).json({ error: "Failed to record transaction" });
+    } finally {
+        client.release();
     }
 });
 
-// GET ALL TRANSACTIONS (Updated to include TREASURER)
+// 4. AUTOMATED WEEKLY COMPLIANCE CHECK (Weekly Deposit Check)
+router.post('/admin/run-weekly-compliance', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // A. Get Settings
+        const minDepositVal = await getSetting('min_weekly_deposit');
+        const penaltyVal = await getSetting('penalty_missed_savings');
+        const minDeposit = parseFloat(minDepositVal) || 250;
+        const penaltyAmount = parseFloat(penaltyVal) || 50;
+
+        // B. Find Non-Compliant Users for THIS WEEK
+        const complianceQuery = `
+            SELECT u.id 
+            FROM users u
+            WHERE u.role = 'MEMBER'
+            AND u.id NOT IN (
+                SELECT user_id FROM transactions 
+                WHERE type = 'DEPOSIT' 
+                AND created_at >= date_trunc('week', CURRENT_DATE)
+                GROUP BY user_id
+                HAVING SUM(amount) >= $1
+            )
+            AND u.id NOT IN (
+                SELECT user_id FROM transactions 
+                WHERE type = 'FINE' 
+                AND description LIKE 'Missed Weekly Deposit%'
+                AND created_at >= date_trunc('week', CURRENT_DATE)
+            )
+        `;
+
+        const nonCompliant = await client.query(complianceQuery, [minDeposit]);
+        
+        if (nonCompliant.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.json({ message: "Compliance Check Complete. Everyone is up to date!", count: 0 });
+        }
+
+        // C. Apply Fines & Auto-Deduct
+        const weekStr = new Date().toLocaleDateString('en-GB', { week: 'numeric', year: 'numeric' });
+        let deductedCount = 0;
+
+        for (const user of nonCompliant.rows) {
+            const ref = `AUTO-FINE-${user.id}-${Date.now().toString().slice(-6)}`;
+            
+            // 1. Record Fine
+            await client.query(
+                `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
+                 VALUES ($1, 'FINE', $2, $3, $4)`,
+                [user.id, penaltyAmount, ref, `Missed Weekly Deposit (Week ${weekStr})`]
+            );
+
+            // 2. Deduct from Savings (If they have ANY money)
+            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1", [user.id]);
+            const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
+
+            if (currentSavings > 0) {
+                await client.query(
+                    `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
+                     VALUES ($1, $2, 'DEDUCTION', $3, 'COMPLETED')`,
+                    [user.id, -penaltyAmount, `DEDUCT-${ref}`]
+                );
+                deductedCount++;
+            }
+        }
+
+        await client.query('COMMIT');
+
+        res.json({ 
+            success: true, 
+            message: `Compliance Check: Fined ${nonCompliant.rows.length} members. Deducted from ${deductedCount} accounts.`, 
+            count: nonCompliant.rows.length 
+        });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error("Compliance Error", err);
+        res.status(500).json({ error: "Compliance check failed" });
+    } finally {
+        client.release();
+    }
+});
+
+// GET ALL TRANSACTIONS
 router.get('/admin/all', authenticateUser, (req, res, next) => {
-    // Added TREASURER to the list
     if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next();
     else res.status(403).json({ error: "Access Denied" });
 }, async (req, res) => {
@@ -158,7 +279,6 @@ router.get('/admin/all', authenticateUser, (req, res, next) => {
         );
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: "Could not fetch transactions" });
     }
 });
