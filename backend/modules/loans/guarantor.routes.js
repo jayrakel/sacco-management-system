@@ -1,70 +1,101 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-const { notifyUser } = require('../common/notify');
+const { authenticateUser } = require('../auth/middleware');
 
-router.get('/members/search', async (req, res) => {
-    const { q } = req.query;
-    if (!q) return res.json([]);
+// 1. GET INCOMING REQUESTS (People asking ME to be guarantor)
+router.get('/requests', authenticateUser, async (req, res) => {
     try {
-        const result = await db.query(`SELECT id, full_name, phone_number FROM users WHERE id != $1 AND (full_name ILIKE $2 OR phone_number ILIKE $2) LIMIT 5`, [req.user.id, `%${q}%`]);
+        const result = await db.query(`
+            SELECT g.id, l.amount_requested, u.full_name as applicant_name, g.status
+            FROM loan_guarantors g
+            JOIN loan_applications l ON g.loan_application_id = l.id
+            JOIN users u ON l.user_id = u.id
+            WHERE g.guarantor_id = $1 AND g.status = 'PENDING'
+        `, [req.user.id]);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: "Search failed" }); }
-});
-
-router.get('/guarantors', async (req, res) => {
-    try {
-        const loan = await db.query("SELECT id FROM loan_applications WHERE user_id = $1 AND status IN ('PENDING_GUARANTORS')", [req.user.id]);
-        if (loan.rows.length === 0) return res.json([]);
-        const result = await db.query(`SELECT g.id, u.full_name, g.status FROM loan_guarantors g JOIN users u ON g.guarantor_id = u.id WHERE g.loan_application_id = $1`, [loan.rows[0].id]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
-});
-
-router.post('/guarantors/add', async (req, res) => {
-    const { guarantorId, loanId } = req.body;
-    try {
-        await db.query("INSERT INTO loan_guarantors (loan_application_id, guarantor_id) VALUES ($1, $2)", [loanId, guarantorId]);
-        // Update main table array
-        await db.query(`UPDATE loan_applications SET guarantor_ids = ARRAY(SELECT guarantor_id FROM loan_guarantors WHERE loan_application_id = $1) WHERE id = $1`, [loanId]);
-        
-        const app = await db.query("SELECT full_name FROM users WHERE id=$1", [req.user.id]);
-        await notifyUser(guarantorId, `🤝 Request: ${app.rows[0].full_name} needs a guarantor (Loan #${loanId}).`);
-        res.json({ success: true });
-    } catch (err) { 
-        if(err.code === '23505') return res.status(400).json({ error: "Already added" });
-        res.status(500).json({ error: "Failed" }); 
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch requests" });
     }
 });
 
-router.get('/guarantors/requests', async (req, res) => {
+// 2. SEND REQUEST (I ask SOMEONE to be my guarantor)
+router.post('/add', authenticateUser, async (req, res) => {
+    const { loanId, guarantorId } = req.body;
     try {
-        const result = await db.query(
-            `SELECT g.id, u.full_name as applicant_name, l.amount_requested FROM loan_guarantors g
-             JOIN loan_applications l ON g.loan_application_id = l.id
-             JOIN users u ON l.user_id = u.id
-             WHERE g.guarantor_id = $1 AND g.status = 'PENDING'`,
-            [req.user.id]
+        // Check self-guarantee
+        if (parseInt(guarantorId) === req.user.id) return res.status(400).json({ error: "You cannot guarantee yourself" });
+
+        // Check duplicate
+        const exists = await db.query("SELECT * FROM loan_guarantors WHERE loan_application_id=$1 AND guarantor_id=$2", [loanId, guarantorId]);
+        if (exists.rows.length > 0) return res.status(400).json({ error: "Already requested this member" });
+
+        await db.query(
+            "INSERT INTO loan_guarantors (loan_application_id, guarantor_id) VALUES ($1, $2)",
+            [loanId, guarantorId]
         );
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
+        res.json({ message: "Request sent" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to add guarantor" });
+    }
 });
 
-router.post('/guarantors/respond', async (req, res) => {
-    const { requestId, decision } = req.body; 
+// 3. RESPOND TO REQUEST (I Accept/Decline someone)
+router.post('/respond', authenticateUser, async (req, res) => {
+    const { requestId, decision } = req.body; // ACCEPTED or DECLINED
     try {
-        const check = await db.query("SELECT loan_application_id FROM loan_guarantors WHERE id=$1 AND guarantor_id=$2", [requestId, req.user.id]);
-        if (check.rows.length === 0) return res.status(403).json({ error: "Unauthorized" });
+        await db.query(
+            "UPDATE loan_guarantors SET status = $1 WHERE id = $2 AND guarantor_id = $3",
+            [decision, requestId, req.user.id]
+        );
+        res.json({ message: "Response recorded" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to respond" });
+    }
+});
 
-        await db.query("UPDATE loan_guarantors SET status=$1 WHERE id=$2", [decision, requestId]);
-        // Sync main table
-        const loanId = check.rows[0].loan_application_id;
-        await db.query(`UPDATE loan_applications SET guarantor_ids = ARRAY(SELECT guarantor_id FROM loan_guarantors WHERE loan_application_id = $1) WHERE id = $1`, [loanId]);
+// 4. GET MY GUARANTORS (Who is guaranteeing ME?)
+router.get('/', authenticateUser, async (req, res) => {
+    try {
+        // Finds the most recent active/pending application for this user
+        const result = await db.query(`
+            SELECT g.*, u.full_name 
+            FROM loan_guarantors g
+            JOIN users u ON g.guarantor_id = u.id
+            JOIN loan_applications l ON g.loan_application_id = l.id
+            WHERE l.user_id = $1 
+            AND l.status IN ('PENDING_GUARANTORS', 'VERIFIED', 'APPROVED', 'ACTIVE')
+            ORDER BY g.created_at DESC
+        `, [req.user.id]);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch your guarantors" });
+    }
+});
 
-        const loan = await db.query("SELECT user_id FROM loan_applications WHERE id=$1", [loanId]);
-        await notifyUser(loan.rows[0].user_id, `Guarantor request ${decision} for Loan #${loanId}.`);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Action failed" }); }
+// 5. NEW: GET MY LIABILITIES (Loans I guaranteed for OTHERS)
+router.get('/liabilities', authenticateUser, async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT 
+                l.id as loan_id,
+                l.amount_requested,
+                l.amount_repaid,
+                l.total_due,
+                l.status as loan_status,
+                u.full_name as borrower_name,
+                g.status as my_decision
+            FROM loan_guarantors g
+            JOIN loan_applications l ON g.loan_application_id = l.id
+            JOIN users u ON l.user_id = u.id
+            WHERE g.guarantor_id = $1 AND g.status = 'ACCEPTED'
+            ORDER BY l.created_at DESC
+        `, [req.user.id]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch liabilities" });
+    }
 });
 
 module.exports = router;
