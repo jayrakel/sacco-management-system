@@ -230,4 +230,30 @@ router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
     }
 });
 
+// ADMIN DELETE MEMBER
+router.delete('/admin/delete/:userId', authenticateUser, async (req, res) => {
+    // 1. Only Admin can delete
+    if (req.user.role !== 'ADMIN') {
+        return res.status(403).json({ error: "Access Denied" });
+    }
+
+    try {
+        // 2. Attempt Delete
+        await db.query("DELETE FROM users WHERE id = $1", [req.params.userId]);
+        res.json({ message: "User deleted successfully" });
+
+    } catch (err) {
+        console.error("Delete Error:", err);
+        
+        // 3. Handle Foreign Key Constraint (User has money/loans)
+        if (err.code === '23503') {
+            return res.status(400).json({ 
+                error: "Cannot delete user because they have active transactions or loans. Please deactivate them instead." 
+            });
+        }
+        
+        res.status(500).json({ error: "Failed to delete user" });
+    }
+});
+
 module.exports = router;
