@@ -1,4 +1,3 @@
-// backend/modules/loans/treasury.routes.js
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
@@ -9,7 +8,6 @@ const { getSetting } = require('../settings/routes');
 // GET DISBURSEMENT QUEUE
 router.get('/treasury/queue', requireRole('TREASURER'), async (req, res) => {
     try {
-        // Added l.created_at and l.updated_at to the selection
         const result = await db.query(
             `SELECT l.id, l.amount_requested, l.repayment_weeks, l.purpose, 
                     l.created_at, l.updated_at,
@@ -63,29 +61,58 @@ router.get('/treasury/stats', requireRole('TREASURER'), async (req, res) => {
     }
 });
 
-// PROCESS DISBURSEMENT
+// --- UPDATED: PROCESS DISBURSEMENT (With Amortization Choice) ---
 router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSchema), async (req, res) => {
     const { loanId } = req.body;
     const client = await db.pool.connect();
+    
     try {
         await client.query('BEGIN');
         
-        // 1. Fetch Loan
-        const check = await client.query("SELECT status, amount_requested, user_id FROM loan_applications WHERE id=$1", [loanId]);
+        // 1. Fetch Loan & System Settings
+        const check = await client.query("SELECT status, amount_requested, repayment_weeks, user_id FROM loan_applications WHERE id=$1", [loanId]);
         if (check.rows.length === 0 || check.rows[0].status !== 'APPROVED') throw new Error("Invalid loan status");
         
         const loan = check.rows[0];
         const principal = parseFloat(loan.amount_requested);
+        const weeks = parseInt(loan.repayment_weeks);
 
-        // 2. Get Interest Rate
+        // Settings
         const rateVal = await getSetting('interest_rate'); 
-        const rate = parseFloat(rateVal || 10);
+        const typeVal = await getSetting('loan_interest_type');
+        
+        const rateInput = parseFloat(rateVal || 10);
+        const interestType = typeVal || 'FLAT'; // Default to FLAT if missing
 
-        // 3. Calculate Totals
-        const interest = principal * (rate / 100);
-        const totalDue = principal + interest;
+        let totalInterest = 0;
+        let totalDue = 0;
 
-        // 4. Update Loan Status
+        // 2. Calculate Based on Type
+        if (interestType === 'REDUCING') {
+            // REDUCING BALANCE LOGIC
+            // Assumption: rateInput is % Per Annum (e.g., 12% PA)
+            // We convert to Weekly Rate: (12 / 100) / 52
+            const weeklyRate = (rateInput / 100) / 52;
+            
+            // Formula: PMT = P * r * (1+r)^n / ((1+r)^n - 1)
+            const factor = Math.pow(1 + weeklyRate, weeks);
+            const weeklyInstallment = principal * ((weeklyRate * factor) / (factor - 1));
+            
+            totalDue = weeklyInstallment * weeks;
+            totalInterest = totalDue - principal;
+
+            console.log(`[Disburse] REDUCING: P=${principal}, Rate=${rateInput}% PA, Weeks=${weeks} -> Total Due=${totalDue.toFixed(2)}`);
+
+        } else {
+            // FLAT RATE LOGIC (Legacy/Simple)
+            // Assumption: rateInput is Flat % of Principal (e.g., 10% Flat)
+            totalInterest = principal * (rateInput / 100);
+            totalDue = principal + totalInterest;
+
+            console.log(`[Disburse] FLAT: P=${principal}, Rate=${rateInput}% Flat -> Total Due=${totalDue.toFixed(2)}`);
+        }
+
+        // 3. Update Loan Status
         await client.query(
             `UPDATE loan_applications 
              SET status='ACTIVE', 
@@ -94,19 +121,31 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
                  updated_at=NOW(), 
                  disbursed_at=NOW() 
              WHERE id=$3`, 
-            [interest, totalDue, loanId]
+            [totalInterest, totalDue, loanId]
         );
 
-        // 5. Create Transaction Record
+        // 4. Create Transaction Record
         await client.query(
             "INSERT INTO transactions (user_id, type, amount, reference_code, description) VALUES ($1, 'LOAN_DISBURSEMENT', $2, $3, $4)", 
-            [loan.user_id, principal, `DISB-${loanId}`, `Disbursement for Loan #${loanId}`]
+            [loan.user_id, principal, `DISB-${loanId}`, `Disbursement (${interestType} Interest)`]
         );
 
         await client.query('COMMIT');
-        res.json({ success: true, message: `Loan disbursed. Interest of ${rate}% applied.` });
+        
+        res.json({ 
+            success: true, 
+            message: `Loan disbursed successfully.`,
+            details: {
+                type: interestType,
+                principal: principal,
+                interest: totalInterest.toFixed(2),
+                total_due: totalDue.toFixed(2)
+            }
+        });
+
     } catch (err) { 
         await client.query('ROLLBACK'); 
+        console.error("Disbursement Failed:", err);
         res.status(500).json({ error: err.message }); 
     } finally { 
         client.release(); 
