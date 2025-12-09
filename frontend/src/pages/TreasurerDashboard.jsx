@@ -3,7 +3,7 @@ import api from '../api';
 import { 
     Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, 
     Briefcase, DollarSign, Users, Clock, Shield, List, Settings, FolderPlus, Trash2,
-    Landmark, Receipt 
+    Landmark, Receipt // Added for Assets & Expenses icons
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 import AdvancedReporting from '../components/AdvancedReporting';
@@ -74,13 +74,13 @@ export default function TreasurerDashboard({ user, onLogout }) {
 
                 // 4. Fetch Assets
                 if (activeTab === 'assets') {
-                    const res = await api.get('/api/advanced-reports/management/assets');
+                    const res = await api.get('/api/management/assets');
                     setAssets(res.data || []);
                 }
 
                 // 5. Fetch Expenses
                 if (activeTab === 'expenses') {
-                    const res = await api.get('/api/advanced-reports/management/expenses');
+                    const res = await api.get('/api/management/expenses');
                     setExpenses(res.data || []);
                 }
                 
@@ -186,7 +186,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         e.preventDefault();
         setLoading(true);
         try {
-            await api.post('/api/advanced-reports/management/assets', newAsset);
+            await api.post('/api/management/assets', newAsset);
             alert("Asset Added Successfully!");
             setNewAsset({ name: '', type: 'LAND', value: '', location: '', description: '' });
             setRefreshKey(k => k + 1);
@@ -200,7 +200,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         e.preventDefault();
         setLoading(true);
         try {
-            await api.post('/api/advanced-reports/management/expenses', newExpense);
+            await api.post('/api/management/expenses', newExpense);
             alert("Expense Recorded Successfully!");
             setNewExpense({ title: '', category: 'GENERAL', amount: '', description: '' });
             setRefreshKey(k => k + 1);
@@ -505,7 +505,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 {/* 3. FINANCE RECORDS */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
-                        {/* Main Header */}
                         <div className="bg-gradient-to-r from-indigo-900 to-purple-900 text-white rounded-2xl p-8 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
                             <div>
                                 <p className="text-indigo-200 font-bold text-sm uppercase tracking-widest">Total Sacco Assets</p>
@@ -517,7 +516,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             </div>
                         </div>
 
-                        {/* Breakdown Cards */}
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                             <FinanceCard title="Deposits" amount={breakdown.deposits} icon={<TrendingUp size={20}/>} activeId="deposits" colorClass="emerald" />
                             <FinanceCard title="Reg Fees" amount={breakdown.regFees} icon={<Briefcase size={20}/>} activeId="reg_fees" colorClass="blue" />
@@ -527,7 +525,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             <FinanceCard title="Disbursed" amount={breakdown.disbursements} icon={<Send size={20}/>} activeId="disbursements" colorClass="purple" />
                         </div>
 
-                        {/* Detailed List */}
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                             <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                                 <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -556,7 +553,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 4. ACTIVE PORTFOLIO (NEW) */}
+                {/* 4. ACTIVE PORTFOLIO */}
                 {activeTab === 'portfolio' && (
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
@@ -652,7 +649,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                             <tr key={a.id} className="hover:bg-slate-50">
                                                 <td className="p-3 font-bold text-slate-700">{a.name}<br/><span className="text-xs font-normal text-slate-400">{a.location}</span></td>
                                                 <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{a.type}</span></td>
-                                                <td className="p-3 text-emerald-600 font-bold">KES {parseFloat(a.purchase_value).toLocaleString()}</td>
+                                                <td className="p-3 text-emerald-600 font-bold">KES {parseFloat(a.value).toLocaleString()}</td>
                                                 <td className="p-3 text-xs text-slate-500">{new Date(a.created_at).toLocaleDateString()}</td>
                                             </tr>
                                         ))}
