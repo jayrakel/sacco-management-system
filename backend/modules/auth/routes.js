@@ -8,6 +8,19 @@ const db = require('../../db');
 const { authenticateUser } = require('./middleware');
 const { validate, registerSchema } = require('../common/validation');
 
+/*
+// --- [MUTED] HELPER: SMS SENDER ---
+const sendSMS = async (phone, message) => {
+    console.log(`
+    📱 [SMS SIMULATION] 
+    To: ${phone}
+    Message: ${message}
+    -------------------
+    `);
+    return true;
+};
+*/
+
 // --- EMAIL CONFIGURATION ---
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -33,22 +46,29 @@ router.post('/register', validate(registerSchema), async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
         const verifyToken = crypto.randomBytes(32).toString('hex');
+        
+        // [MUTED] Phone OTP Generation
+        // const smsOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        // const otpExpiry = new Date(Date.now() + 10 * 60000); 
 
         const client = await db.pool.connect();
         try {
             await client.query('BEGIN');
 
+            // [UPDATED] Insert User (Without Phone Verification fields)
             const newUser = await client.query(
                 `INSERT INTO users (
                     full_name, email, password_hash, phone_number, role,
                     id_number, kra_pin, next_of_kin_name, next_of_kin_phone, next_of_kin_relation,
                     is_email_verified, verification_token, must_change_password
+                    -- is_phone_verified, phone_otp, phone_otp_expires_at (REMOVED)
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, $11, TRUE) 
                 RETURNING id, full_name, email, role`,
                 [
                     fullName, email, hash, phoneNumber, role || 'MEMBER', 
                     idNumber, kraPin, nextOfKinName, nextOfKinPhone, nextOfKinRelation,
                     verifyToken
+                    // smsOtp, otpExpiry (REMOVED)
                 ]
             );
 
@@ -59,11 +79,15 @@ router.post('/register', validate(registerSchema), async (req, res) => {
                 );
             }
 
-            await client.query('COMMIT');
-
-            // --- SEND REAL EMAIL ---
-            const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verifyToken}`;
+            // --- SEND EMAIL ---
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+            const verificationLink = `${frontendUrl}/verify-email?token=${verifyToken}`;
             
+            console.log("------------------------------------------------");
+            console.log(`📧 Sending verification to: ${email}`);
+            console.log(`🔗 Link: ${verificationLink}`);
+            console.log("------------------------------------------------");
+
             await transporter.sendMail({
                 from: process.env.EMAIL_FROM,
                 to: email,
@@ -80,42 +104,35 @@ router.post('/register', validate(registerSchema), async (req, res) => {
                 `
             });
 
+            // [MUTED] SMS Sending
+            // await sendSMS(phoneNumber, `Your Sacco Verification Code is: ${smsOtp}`);
+
+            await client.query('COMMIT');
             res.json({ message: "User registered. Verification email sent.", user: newUser.rows[0] });
 
         } catch (e) {
             await client.query('ROLLBACK');
+            console.error("Registration Error:", e);
             throw e;
         } finally {
             client.release();
         }
 
     } catch (err) {
-        console.error("Registration Error:", err);
-        res.status(500).json({ error: "Server error during registration. Check logs." });
+        console.error("Server Error:", err);
+        res.status(500).json({ error: "Registration failed. Check server logs." });
     }
 });
 
-// VERIFY EMAIL ROUTE
-router.post('/verify-email', async (req, res) => {
-    const { token } = req.body;
-    try {
-        const result = await db.query(
-            "UPDATE users SET is_email_verified = TRUE, verification_token = NULL WHERE verification_token = $1 RETURNING id, email",
-            [token]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(400).json({ error: "Invalid or expired token." });
-        }
-
-        res.json({ success: true, message: "Email verified successfully!" });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Verification failed." });
-    }
+/*
+// [MUTED] VERIFY PHONE OTP ROUTE
+router.post('/verify-phone', authenticateUser, async (req, res) => {
+    // ... code commented out ...
+    res.status(503).json({ error: "Feature disabled" });
 });
+*/
 
-// LOGIN (Blocks Unverified)
+// LOGIN
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
@@ -125,12 +142,11 @@ router.post('/login', async (req, res) => {
 
         const user = result.rows[0];
         
-        // --- FIX: USE 400 INSTEAD OF 403 FOR UNVERIFIED USERS ---
-        // This prevents the frontend interceptor from redirecting to /unauthorized
+        // --- CHECK EMAIL VERIFICATION ---
         if (!user.is_email_verified) {
             return res.status(400).json({ error: "Please verify your email first. Check your inbox." });
         }
-
+        
         if (!user.is_active) return res.status(403).json({ error: "Account deactivated. Contact Admin." });
 
         const validPass = await bcrypt.compare(password, user.password_hash);
@@ -157,7 +173,8 @@ router.post('/login', async (req, res) => {
                 name: user.full_name, 
                 email: user.email, 
                 role: user.role,
-                mustChangePassword: user.must_change_password 
+                mustChangePassword: user.must_change_password,
+                // isPhoneVerified: user.is_phone_verified // [MUTED]
             } 
         });
 
@@ -167,13 +184,31 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// VERIFY EMAIL ROUTE (Unchanged)
+router.post('/verify-email', async (req, res) => {
+    const { token } = req.body;
+    try {
+        const result = await db.query(
+            "UPDATE users SET is_email_verified = TRUE, verification_token = NULL WHERE verification_token = $1 RETURNING id, email",
+            [token]
+        );
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: "Invalid or expired token." });
+        }
+        res.json({ success: true, message: "Email verified successfully!" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Verification failed." });
+    }
+});
+
 // LOGOUT
 router.post('/logout', (req, res) => {
     res.clearCookie('token');
     res.json({ message: "Logged out" });
 });
 
-// GET ALL USERS (Protected)
+// GET ALL USERS
 router.get('/users', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });

@@ -95,7 +95,20 @@ const initializeSystem = async () => {
                     ALTER TABLE users ADD COLUMN verification_token VARCHAR(255);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
                 
-                -- 3. KYC Fields
+                -- 3. [MUTED] Phone Verification Columns
+                /*
+                BEGIN
+                    ALTER TABLE users ADD COLUMN is_phone_verified BOOLEAN DEFAULT FALSE;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN phone_otp VARCHAR(6);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN phone_otp_expires_at TIMESTAMP;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                */
+
+                -- 4. KYC Fields
                 BEGIN
                     ALTER TABLE users ADD COLUMN id_number VARCHAR(20);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;

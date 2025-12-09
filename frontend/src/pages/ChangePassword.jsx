@@ -1,78 +1,111 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom'; // Import useNavigate
 import api from '../api';
-import { Lock, CheckCircle } from 'lucide-react';
+import { Lock, Save, AlertCircle } from 'lucide-react';
+import DashboardHeader from '../components/DashboardHeader';
 
-export default function ChangePassword({ onPasswordChanged }) {
-  const [newPassword, setNewPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  const navigate = useNavigate();
+export default function ChangePassword({ user, onLogout }) {
+    const [passwords, setPasswords] = useState({ new: '', confirm: '' });
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    
+    // Hook for redirection
+    const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
 
-    if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters long.");
-      return;
-    }
+        if (passwords.new !== passwords.confirm) {
+            setError("Passwords do not match");
+            return;
+        }
 
-    try {
-      await api.post('/api/auth/change-password', { newPassword });
-      setSuccess(true);
-      
-      // Update local user state via prop callback
-      if (onPasswordChanged) {
-        onPasswordChanged();
-      }
+        if (passwords.new.length < 6) {
+            setError("Password must be at least 6 characters");
+            return;
+        }
 
-      // Redirect to the Unified Portal
-      setTimeout(() => {
-        navigate('/portal'); 
-      }, 2000);
-
-    } catch (err) {
-      setError(err.response?.data?.error || "Failed to update password.");
-    }
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100">
-      <div className="bg-white p-8 rounded-xl shadow-md w-full max-w-md">
-        <div className="text-center mb-6">
-          <div className="bg-amber-100 p-4 rounded-full inline-block mb-4">
-            <Lock className="text-amber-600" size={32} />
-          </div>
-          <h2 className="text-2xl font-bold text-slate-800">Security Update Required</h2>
-          <p className="text-slate-500 mt-2">You must change your default password before continuing.</p>
-        </div>
-
-        {success ? (
-          <div className="bg-green-50 text-green-700 p-4 rounded-lg text-center flex flex-col items-center gap-2">
-            <CheckCircle size={32} />
-            <p>Password updated successfully! Redirecting to Portal...</p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <div className="text-red-500 text-sm bg-red-50 p-3 rounded">{error}</div>}
+        setLoading(true);
+        try {
+            await api.post('/api/auth/change-password', { newPassword: passwords.new });
             
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
-              <input 
-                type="password" required 
-                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new secure password"
-              />
+            // --- 🔧 CRITICAL FIX: UPDATE LOCAL STORAGE ---
+            // We verify the user object exists before modifying it
+            const savedUser = JSON.parse(localStorage.getItem('sacco_user') || '{}');
+            savedUser.mustChangePassword = false; // Flip the flag
+            localStorage.setItem('sacco_user', JSON.stringify(savedUser));
+            
+            alert("Password Changed Successfully! Redirecting to Dashboard...");
+            
+            // Force a hard reload to ensure App.jsx reads the new LocalStorage state
+            window.location.href = '/portal'; 
+            
+        } catch (err) {
+            console.error(err);
+            setError(err.response?.data?.error || "Failed to update password");
+        }
+        setLoading(false);
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+             {/* Only show logout since header navigation is blocked */}
+            <div className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center">
+                <h1 className="font-bold text-xl text-slate-800">Security Check</h1>
+                <button onClick={onLogout} className="text-red-600 font-bold text-sm hover:underline">Logout</button>
             </div>
 
-            <button className="w-full bg-slate-900 text-white py-3 rounded-lg hover:bg-slate-800 transition">
-              Update Password
-            </button>
-          </form>
-        )}
-      </div>
-    </div>
-  );
+            <main className="max-w-md mx-auto mt-16 px-4">
+                <div className="bg-white rounded-2xl shadow-xl border border-indigo-100 overflow-hidden">
+                    <div className="bg-indigo-900 p-6 text-center">
+                        <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <Lock className="text-white" size={32} />
+                        </div>
+                        <h2 className="text-2xl font-bold text-white">Change Password</h2>
+                        <p className="text-indigo-200 text-sm mt-2">
+                            For security, you must update your default password before proceeding.
+                        </p>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="p-8 space-y-6">
+                        {error && (
+                            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-center gap-2">
+                                <AlertCircle size={16}/> {error}
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">New Password</label>
+                            <input 
+                                type="password" 
+                                required
+                                className="w-full border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-500"
+                                value={passwords.new}
+                                onChange={e => setPasswords({...passwords, new: e.target.value})}
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirm Password</label>
+                            <input 
+                                type="password" 
+                                required
+                                className="w-full border border-slate-300 rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-500"
+                                value={passwords.confirm}
+                                onChange={e => setPasswords({...passwords, confirm: e.target.value})}
+                            />
+                        </div>
+
+                        <button 
+                            disabled={loading}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition flex items-center justify-center gap-2"
+                        >
+                            {loading ? 'Updating...' : <>Update & Continue <Save size={18}/></>}
+                        </button>
+                    </form>
+                </div>
+            </main>
+        </div>
+    );
 }
