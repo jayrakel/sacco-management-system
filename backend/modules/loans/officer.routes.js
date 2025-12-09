@@ -5,6 +5,22 @@ const { requireRole } = require('../auth/middleware');
 const { notifyUser } = require('../common/notify');
 
 // VERIFY APPLICATION (Loan Officer Action)
+
+router.get('/officer/applications', requireRole('LOAN_OFFICER'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT l.*, u.full_name 
+             FROM loan_applications l 
+             JOIN users u ON l.user_id = u.id 
+             WHERE l.status IN ('SUBMITTED', 'PENDING_GUARANTORS', 'ACTIVE', 'VERIFIED')
+             ORDER BY l.created_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Fetch error" });
+    }
+});
 // Moves status from 'SUBMITTED' -> 'VERIFIED'
 router.post('/officer/verify', requireRole('LOAN_OFFICER'), async (req, res) => {
     const { loanId } = req.body;

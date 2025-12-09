@@ -27,7 +27,8 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
                 
                 if (activeTab === 'appraisals') {
                     // Fetch loans waiting for review (Status: PENDING_GUARANTORS or SUBMITTED)
-                    const res = await api.get('/api/loan/admin/all'); 
+                    // const res = await api.get('/api/loan/admin/all');
+                    const res = await api.get('/api/loan/officer/applications');
                     // Filter locally for demo purposes if backend filter isn't ready
                     const pending = res.data.filter(l => ['SUBMITTED', 'PENDING_GUARANTORS'].includes(l.status));
                     setApplications(pending);
