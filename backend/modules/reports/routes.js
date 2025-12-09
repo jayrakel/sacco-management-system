@@ -395,4 +395,37 @@ router.get('/summary', authenticateUser, async (req, res) => {
     } catch(e) { res.status(500).json({error: "Error"}); }
 });
 
+// ============================================================================
+// ROUTE 3: ACTIVE PORTFOLIO (FIXED: ADDED THIS ROUTE)
+// ============================================================================
+router.get('/active-portfolio', authenticateUser, async (req, res) => {
+    try {
+        if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+
+        const result = await db.query(`
+            SELECT 
+                l.id, 
+                u.full_name, 
+                l.total_due, 
+                l.amount_repaid, 
+                (l.total_due - l.amount_repaid) as outstanding_balance,
+                l.disbursed_at,
+                l.amount_requested as principal,
+                CASE 
+                    WHEN l.total_due > 0 THEN ROUND((l.amount_repaid / l.total_due) * 100, 1) 
+                    ELSE 0 
+                END as progress
+            FROM loan_applications l
+            JOIN users u ON l.user_id = u.id
+            WHERE l.status = 'ACTIVE'
+            ORDER BY l.created_at DESC
+        `);
+        
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Portfolio Error:", err);
+        res.status(500).json({ error: "Failed to fetch portfolio" });
+    }
+});
+
 module.exports = router;

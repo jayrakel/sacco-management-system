@@ -120,6 +120,11 @@ const initializeSystem = async () => {
                 BEGIN
                     ALTER TABLE users ADD COLUMN profile_image TEXT;
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
+
+                -- 5. Deposits Fixes (Fixing "column category does not exist")
+                BEGIN
+                    ALTER TABLE deposits ADD COLUMN category VARCHAR(50) DEFAULT 'DEPOSIT';
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
             END $$;
         `);
 
