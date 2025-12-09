@@ -131,18 +131,29 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleDownloadStatement = async () => {
     try {
       showNotify("success", "Generating PDF...");
-      // FIX: Added '/api' prefix to match your server routes
-      const response = await api.get('/api/reports/statement/me', { 
-        responseType: 'blob', 
-      });
       
+      // 1. Request the PDF
+      const response = await api.get('/api/reports/statement/me', {
+        responseType: 'blob',
+      });
+
+      // 2. Generate Custom Filename: "John_Doe_Statement_2023-10-25_14-30.pdf"
+      const safeName = user.name ? user.name.replace(/[^a-zA-Z0-9]/g, '_') : 'Member';
+      const now = new Date();
+      // Format: YYYY-MM-DD_HH-MM
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+      const fileName = `${safeName}_Statement_${dateStr}_${timeStr}.pdf`;
+
+      // 3. Trigger Download
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `Statement_${user.id}_${new Date().toISOString().split('T')[0]}.pdf`);
+      link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
       link.remove();
+      
     } catch (err) {
       console.error(err);
       showNotify("error", "Failed to generate statement.");
