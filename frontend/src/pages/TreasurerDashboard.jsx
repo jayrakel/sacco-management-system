@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
-    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield, List, Settings, FolderPlus, Trash2
+    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, 
+    Briefcase, DollarSign, Users, Clock, Shield, List, Settings, FolderPlus, Trash2,
+    Landmark, Receipt 
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 import AdvancedReporting from '../components/AdvancedReporting';
 
 export default function TreasurerDashboard({ user, onLogout }) {
-    // Main Tabs: 'queue', 'verification', 'finance', 'portfolio', 'reports'
+    // Main Tabs: 'queue', 'verification', 'finance', 'portfolio', 'reports', 'assets', 'expenses'
     const [activeTab, setActiveTab] = useState('queue'); 
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
@@ -15,7 +17,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
     const [queue, setQueue] = useState([]);
     const [stats, setStats] = useState({ availableFunds: 0, totalDisbursed: 0 });
     const [pendingDeposits, setPendingDeposits] = useState([]); 
-    const [portfolio, setPortfolio] = useState([]); // NEW: Active Loans
+    const [portfolio, setPortfolio] = useState([]); 
     
     // Category Management
     const [categories, setCategories] = useState([]);
@@ -24,6 +26,12 @@ export default function TreasurerDashboard({ user, onLogout }) {
     // Financial Records
     const [deposits, setDeposits] = useState([]);
     const [transactions, setTransactions] = useState([]);
+
+    // NEW: Assets & Expenses State
+    const [assets, setAssets] = useState([]);
+    const [expenses, setExpenses] = useState([]);
+    const [newAsset, setNewAsset] = useState({ name: '', type: 'LAND', value: '', location: '', description: '' });
+    const [newExpense, setNewExpense] = useState({ title: '', category: 'GENERAL', amount: '', description: '' });
     
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
@@ -31,30 +39,49 @@ export default function TreasurerDashboard({ user, onLogout }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // 1. Fetch Queue, Basic Stats & Pending Deposits
-                const [qRes, sRes, depPendingRes, catRes] = await Promise.all([
-                    api.get('/api/loan/treasury/queue'),
-                    api.get('/api/loan/treasury/stats'),
-                    api.get('/api/payments/admin/deposits/pending'),
-                    api.get('/api/settings/categories')
-                ]);
-                setQueue(qRes.data);
-                setStats(sRes.data);
-                setPendingDeposits(depPendingRes.data);
-                setCategories(catRes.data || []);
+                // 1. Always fetch core stats
+                if (activeTab === 'queue' || activeTab === 'finance') {
+                    const [qRes, sRes, depPendingRes] = await Promise.all([
+                        api.get('/api/loan/treasury/queue'),
+                        api.get('/api/loan/treasury/stats'),
+                        api.get('/api/payments/admin/deposits/pending')
+                    ]);
+                    setQueue(qRes.data || []);
+                    setStats(sRes.data || { availableFunds: 0, totalDisbursed: 0 });
+                    setPendingDeposits(depPendingRes.data || []);
+                }
+
+                if (activeTab === 'settings') {
+                    const catRes = await api.get('/api/settings/categories');
+                    setCategories(catRes.data || []);
+                }
 
                 // 2. Fetch Full Financial History
-                const [resDeposits, resTrans] = await Promise.all([
-                    api.get('/api/deposits/admin/all'),
-                    api.get('/api/payments/admin/all')
-                ]);
-                setDeposits(resDeposits.data || []);
-                setTransactions(resTrans.data || []);
+                if (activeTab === 'finance') {
+                    const [resDeposits, resTrans] = await Promise.all([
+                        api.get('/api/deposits/admin/all'),
+                        api.get('/api/payments/admin/all')
+                    ]);
+                    setDeposits(resDeposits.data || []);
+                    setTransactions(resTrans.data || []);
+                }
 
-                // 3. Fetch Portfolio (If tab is active or pre-fetch)
-                if(activeTab === 'portfolio') {
+                // 3. Fetch Portfolio
+                if (activeTab === 'portfolio') {
                     const resPort = await api.get('/api/reports/active-portfolio');
                     setPortfolio(resPort.data || []);
+                }
+
+                // 4. Fetch Assets
+                if (activeTab === 'assets') {
+                    const res = await api.get('/api/advanced-reports/management/assets');
+                    setAssets(res.data || []);
+                }
+
+                // 5. Fetch Expenses
+                if (activeTab === 'expenses') {
+                    const res = await api.get('/api/advanced-reports/management/expenses');
+                    setExpenses(res.data || []);
                 }
                 
             } catch (err) {
@@ -152,6 +179,35 @@ export default function TreasurerDashboard({ user, onLogout }) {
             const res = await api.get('/api/settings/categories');
             setCategories(res.data);
         } catch(err) { alert("Failed"); }
+    };
+
+    // --- NEW HANDLERS FOR ASSETS & EXPENSES ---
+    const handleAddAsset = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/api/advanced-reports/management/assets', newAsset);
+            alert("Asset Added Successfully!");
+            setNewAsset({ name: '', type: 'LAND', value: '', location: '', description: '' });
+            setRefreshKey(k => k + 1);
+        } catch(e) { 
+            alert(e.response?.data?.error || "Failed to add asset"); 
+        }
+        setLoading(false);
+    };
+
+    const handleAddExpense = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/api/advanced-reports/management/expenses', newExpense);
+            alert("Expense Recorded Successfully!");
+            setNewExpense({ title: '', category: 'GENERAL', amount: '', description: '' });
+            setRefreshKey(k => k + 1);
+        } catch(e) { 
+            alert(e.response?.data?.error || "Failed to record expense"); 
+        }
+        setLoading(false);
     };
 
     // --- HELPER COMPONENT ---
@@ -275,6 +331,21 @@ export default function TreasurerDashboard({ user, onLogout }) {
                         >
                             Financial Records
                         </button>
+                        
+                        {/* --- NEW TABS --- */}
+                        <button 
+                            onClick={() => setActiveTab('assets')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'assets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <Landmark size={16}/> Assets
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('expenses')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <Receipt size={16}/> Expenses
+                        </button>
+                        
                         <button 
                             onClick={() => setActiveTab('reports')} 
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'reports' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -295,7 +366,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     <div className="space-y-6 animate-fade-in">
                         {/* Queue Stats Cards */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            {/* Available Funds */}
                             <div className="bg-emerald-600 text-white rounded-2xl p-6 shadow-lg relative overflow-hidden">
                                 <div className="relative z-10">
                                     <div className="flex items-center gap-2 mb-2 opacity-90">
@@ -307,7 +377,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                 <DollarSign size={80} className="absolute -right-4 -bottom-4 text-emerald-500 opacity-30" />
                             </div>
 
-                            {/* Pending Payouts */}
                             <div className={`rounded-2xl p-6 shadow-lg border relative overflow-hidden ${liquidityStatus === 'healthy' ? 'bg-white border-slate-200' : 'bg-red-50 border-red-200'}`}>
                                 <div className="relative z-10">
                                     <div className="flex items-center gap-2 mb-2 text-slate-500">
@@ -324,7 +393,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                 </div>
                             </div>
 
-                            {/* Total Disbursed */}
                             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col justify-center">
                                 <div className="flex items-center gap-2 mb-2 text-indigo-600">
                                     <Send size={20} /> <span className="text-sm font-bold uppercase tracking-wider">Total Disbursed</span>
@@ -401,7 +469,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. VERIFICATION TAB (NEW) */}
+                {/* 2. VERIFICATION TAB */}
                 {activeTab === 'verification' && (
                     <div className="space-y-6 animate-fade-in">
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -534,6 +602,122 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                     {portfolio.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- 5. ASSETS TAB (NEW) --- */}
+                {activeTab === 'assets' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
+                        <div className="md:col-span-1 bg-white p-6 rounded-2xl shadow-sm h-fit border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Landmark size={20} className="text-indigo-600"/> Register Fixed Asset</h3>
+                            <form onSubmit={handleAddAsset} className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Asset Name</label>
+                                    <input type="text" placeholder="e.g. Juja Plot LR/2023" className="w-full border p-2 rounded-lg text-sm" value={newAsset.name} onChange={e=>setNewAsset({...newAsset, name: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Type</label>
+                                    <select className="w-full border p-2 rounded-lg text-sm bg-slate-50" value={newAsset.type} onChange={e=>setNewAsset({...newAsset, type: e.target.value})}>
+                                        <option value="LAND">Land</option>
+                                        <option value="BUILDING">Building</option>
+                                        <option value="VEHICLE">Vehicle</option>
+                                        <option value="EQUIPMENT">Equipment</option>
+                                        <option value="INVESTMENT">Investment</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Current Valuation (KES)</label>
+                                    <input type="number" className="w-full border p-2 rounded-lg text-sm" value={newAsset.value} onChange={e=>setNewAsset({...newAsset, value: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Location / Serial No</label>
+                                    <input type="text" className="w-full border p-2 rounded-lg text-sm" value={newAsset.location} onChange={e=>setNewAsset({...newAsset, location: e.target.value})} />
+                                </div>
+                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700 transition">
+                                    {loading ? 'Saving...' : '+ Add Asset'}
+                                </button>
+                            </form>
+                        </div>
+                        <div className="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 text-slate-800">Asset Register</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                        <tr><th className="p-3">Asset Name</th><th className="p-3">Type</th><th className="p-3">Valuation</th><th className="p-3">Date Added</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {assets.length === 0 ? <tr><td colSpan="4" className="p-4 text-center text-slate-400">No assets recorded.</td></tr> : 
+                                        assets.map(a => (
+                                            <tr key={a.id} className="hover:bg-slate-50">
+                                                <td className="p-3 font-bold text-slate-700">{a.name}<br/><span className="text-xs font-normal text-slate-400">{a.location}</span></td>
+                                                <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{a.type}</span></td>
+                                                <td className="p-3 text-emerald-600 font-bold">KES {parseFloat(a.purchase_value).toLocaleString()}</td>
+                                                <td className="p-3 text-xs text-slate-500">{new Date(a.created_at).toLocaleDateString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- 6. EXPENSES TAB (NEW) --- */}
+                {activeTab === 'expenses' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
+                        <div className="md:col-span-1 bg-white p-6 rounded-2xl shadow-sm h-fit border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Receipt size={20} className="text-rose-600"/> Record Expense</h3>
+                            <form onSubmit={handleAddExpense} className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Expense Title</label>
+                                    <input type="text" placeholder="e.g. Office Rent - March" className="w-full border p-2 rounded-lg text-sm" value={newExpense.title} onChange={e=>setNewExpense({...newExpense, title: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Category</label>
+                                    <select className="w-full border p-2 rounded-lg text-sm bg-slate-50" value={newExpense.category} onChange={e=>setNewExpense({...newExpense, category: e.target.value})}>
+                                        <option value="GENERAL">General</option>
+                                        <option value="RENT">Rent</option>
+                                        <option value="UTILITIES">Utilities</option>
+                                        <option value="TRANSPORT">Transport</option>
+                                        <option value="SALARY">Salary/Allowances</option>
+                                        <option value="MARKETING">Marketing</option>
+                                        <option value="REPAIRS">Repairs</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Amount (KES)</label>
+                                    <input type="number" className="w-full border p-2 rounded-lg text-sm" value={newExpense.amount} onChange={e=>setNewExpense({...newExpense, amount: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Description / Notes</label>
+                                    <textarea className="w-full border p-2 rounded-lg text-sm" rows="2" value={newExpense.description} onChange={e=>setNewExpense({...newExpense, description: e.target.value})} />
+                                </div>
+                                <button disabled={loading} className="w-full bg-rose-600 text-white py-2 rounded-lg font-bold hover:bg-rose-700 transition">
+                                    {loading ? 'Saving...' : 'Record Expense'}
+                                </button>
+                            </form>
+                        </div>
+                        <div className="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 text-slate-800">Operational Expenses History</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                        <tr><th className="p-3">Title</th><th className="p-3">Category</th><th className="p-3">Amount</th><th className="p-3">Date</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {expenses.length === 0 ? <tr><td colSpan="4" className="p-4 text-center text-slate-400">No expenses recorded.</td></tr> : 
+                                        expenses.map(ex => (
+                                            <tr key={ex.id} className="hover:bg-slate-50">
+                                                <td className="p-3 font-bold text-slate-700">{ex.title}</td>
+                                                <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{ex.category}</span></td>
+                                                <td className="p-3 text-rose-600 font-bold">KES {parseFloat(ex.amount).toLocaleString()}</td>
+                                                <td className="p-3 text-xs text-slate-500">{new Date(ex.expense_date).toLocaleDateString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 )}

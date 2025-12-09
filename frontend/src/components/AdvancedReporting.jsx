@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Download, TrendingUp, Users, DollarSign, AlertCircle, FileText, File } from 'lucide-react';
+import { Download, TrendingUp, Users, DollarSign, AlertCircle, FileText, LayoutDashboard, File } from 'lucide-react';
 
 export default function AdvancedReporting() {
-  const [activeReport, setActiveReport] = useState('balance-sheet');
+  const [activeReport, setActiveReport] = useState('dashboard');
   const [reportData, setReportData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start true to prevent flash
   const [error, setError] = useState(null);
+  
+  // Use local date strings to prevent timezone offset issues
+  const today = new Date();
+  const lastMonth = new Date();
+  lastMonth.setMonth(today.getMonth() - 1);
+
   const [dateRange, setDateRange] = useState({
-    start_date: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
-    end_date: new Date().toISOString().split('T')[0]
+    start_date: lastMonth.toLocaleDateString('en-CA'), // YYYY-MM-DD local
+    end_date: today.toLocaleDateString('en-CA')
   });
 
   const COLORS = ['#4F46E5', '#06B6D4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
-  // Fetch report data
   const fetchReport = async (reportType) => {
     try {
       setLoading(true);
@@ -22,6 +27,9 @@ export default function AdvancedReporting() {
       let url = '';
 
       switch (reportType) {
+        case 'dashboard':
+          url = `/api/advanced-reports/dashboard-summary`;
+          break;
         case 'balance-sheet':
           url = `/api/advanced-reports/financial/balance-sheet?date=${dateRange.end_date}`;
           break;
@@ -44,6 +52,7 @@ export default function AdvancedReporting() {
           url = `/api/advanced-reports/transaction-summary?period=daily&start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`;
           break;
         default:
+          setLoading(false);
           return;
       }
 
@@ -70,14 +79,19 @@ export default function AdvancedReporting() {
     }
   };
 
-  // Fetch report when component mounts or when activeReport/dateRange changes
   useEffect(() => {
     fetchReport(activeReport);
   }, [activeReport, dateRange]);
 
+  // Handler to safely switch reports
+  const handleReportSwitch = (reportId) => {
+    setReportData(null); // CRITICAL: Clear old data to prevent rendering crash
+    setLoading(true);
+    setActiveReport(reportId);
+  };
+
   const handleExport = async (format) => {
     try {
-      // Show loading state if needed, or simple toast
       const url = `/api/advanced-reports/export/${activeReport}?format=${format}&start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
@@ -100,6 +114,8 @@ export default function AdvancedReporting() {
     }
   };
 
+  // --- RENDER FUNCTIONS (With Safety Checks) ---
+
   const renderDashboard = () => (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
       <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-6 rounded-lg">
@@ -115,8 +131,8 @@ export default function AdvancedReporting() {
       <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-6 rounded-lg">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-green-100">Total Equity</p>
-            <p className="text-3xl font-bold">KES {reportData?.equity ? parseFloat(reportData.equity).toLocaleString() : '0'}</p>
+            <p className="text-green-100">Total Liabilities</p>
+            <p className="text-3xl font-bold">KES {reportData?.liabilities?.total ? parseFloat(reportData.liabilities.total).toLocaleString() : '0'}</p>
           </div>
           <TrendingUp className="w-12 h-12 opacity-20" />
         </div>
@@ -148,53 +164,72 @@ export default function AdvancedReporting() {
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-bold mb-4">Assets</h3>
+          <h3 className="text-lg font-bold mb-4 text-blue-800">Assets (What Sacco Owns)</h3>
           {reportData?.assets && (
             <div className="space-y-2">
               <div className="flex justify-between">
-                <span className="text-gray-600">Share Capital</span>
-                <span className="font-semibold">KES {parseFloat(reportData.assets.share_capital).toLocaleString()}</span>
+                <span className="text-gray-600">Liquid Cash & Equivalents</span>
+                <span className="font-semibold">KES {parseFloat(reportData.assets.cash_at_hand || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Member Savings</span>
-                <span className="font-semibold">KES {parseFloat(reportData.assets.member_savings).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Loans Outstanding</span>
-                <span className="font-semibold">KES {parseFloat(reportData.assets.loans_outstanding).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Emergency Fund</span>
-                <span className="font-semibold">KES {parseFloat(reportData.assets.emergency_fund).toLocaleString()}</span>
+                <span className="text-gray-600">Loan Portfolio (Outstanding)</span>
+                <span className="font-semibold">KES {parseFloat(reportData.assets.loans_outstanding || 0).toLocaleString()}</span>
               </div>
               <hr className="my-2" />
-              <div className="flex justify-between text-lg font-bold">
+              <div className="flex justify-between text-lg font-bold text-blue-600">
                 <span>Total Assets</span>
-                <span>KES {parseFloat(reportData.assets.total).toLocaleString()}</span>
+                <span>KES {parseFloat(reportData.assets.total || 0).toLocaleString()}</span>
               </div>
             </div>
           )}
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-bold mb-4">Liabilities & Equity</h3>
-          {reportData && (
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Total Liabilities</span>
-                <span className="font-semibold">KES {parseFloat(reportData.liabilities.total).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Equity</span>
-                <span className="font-semibold">KES {parseFloat(reportData.equity).toLocaleString()}</span>
-              </div>
-              <hr className="my-2" />
-              <div className="flex justify-between text-lg font-bold">
-                <span>Total L&E</span>
-                <span>KES {parseFloat(reportData.total_liabilities_equity).toLocaleString()}</span>
-              </div>
+        <div className="space-y-6">
+            <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-lg font-bold mb-4 text-red-800">Liabilities (What Sacco Owes)</h3>
+            {reportData?.liabilities && (
+                <div className="space-y-2">
+                <div className="flex justify-between">
+                    <span className="text-gray-600">Member Deposits</span>
+                    <span className="font-semibold">KES {parseFloat(reportData.liabilities.member_savings || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-600">Emergency Fund</span>
+                    <span className="font-semibold">KES {parseFloat(reportData.liabilities.emergency_fund || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-600">Welfare Fund</span>
+                    <span className="font-semibold">KES {parseFloat(reportData.liabilities.welfare_fund || 0).toLocaleString()}</span>
+                </div>
+                <hr className="my-2" />
+                <div className="flex justify-between text-lg font-bold text-red-600">
+                    <span>Total Liabilities</span>
+                    <span>KES {parseFloat(reportData.liabilities.total || 0).toLocaleString()}</span>
+                </div>
+                </div>
+            )}
             </div>
-          )}
+
+            <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-lg font-bold mb-4 text-green-800">Equity</h3>
+            {reportData?.equity && (
+                <div className="space-y-2">
+                <div className="flex justify-between">
+                    <span className="text-gray-600">Share Capital</span>
+                    <span className="font-semibold">KES {parseFloat(reportData.equity.share_capital || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-600">Retained Earnings</span>
+                    <span className="font-semibold">KES {parseFloat(reportData.equity.retained_earnings || 0).toLocaleString()}</span>
+                </div>
+                <hr className="my-2" />
+                <div className="flex justify-between text-lg font-bold text-green-600">
+                    <span>Total Equity</span>
+                    <span>KES {parseFloat(reportData.equity.total || 0).toLocaleString()}</span>
+                </div>
+                </div>
+            )}
+            </div>
         </div>
       </div>
     </div>
@@ -209,11 +244,15 @@ export default function AdvancedReporting() {
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span>Interest Earned</span>
-                <span className="font-semibold">KES {parseFloat(reportData.revenue.interest_earned).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.revenue.interest_earned || 0).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Penalties</span>
+                <span className="font-semibold">KES {parseFloat(reportData.revenue.penalties_collected || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-lg font-bold pt-2 border-t">
                 <span>Total Revenue</span>
-                <span>KES {parseFloat(reportData.revenue.total).toLocaleString()}</span>
+                <span>KES {parseFloat(reportData.revenue.total || 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -222,23 +261,19 @@ export default function AdvancedReporting() {
             <h3 className="text-lg font-bold mb-3">Expenses</h3>
             <div className="space-y-2">
               <div className="flex justify-between">
-                <span>Penalties</span>
-                <span className="font-semibold">KES {parseFloat(reportData.expenses.penalties).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
                 <span>Dividends Paid</span>
-                <span className="font-semibold">KES {parseFloat(reportData.expenses.dividends_paid).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.expenses.dividends_paid || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-lg font-bold pt-2 border-t">
                 <span>Total Expenses</span>
-                <span>KES {parseFloat(reportData.expenses.total).toLocaleString()}</span>
+                <span>KES {parseFloat(reportData.expenses.total || 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
 
           <div>
             <h3 className="text-lg font-bold mb-3">Net Income</h3>
-            <div className="text-3xl font-bold text-green-600">KES {parseFloat(reportData.net_income).toLocaleString()}</div>
+            <div className="text-3xl font-bold text-green-600">KES {parseFloat(reportData.net_income || 0).toLocaleString()}</div>
             <div className="text-gray-600">Profit Margin: {reportData.profit_margin}</div>
           </div>
         </>
@@ -255,24 +290,24 @@ export default function AdvancedReporting() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-gray-600 text-sm">Inflows</p>
-                <p className="text-2xl font-bold text-green-600">KES {parseFloat(reportData.operating_activities.inflow.total).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-green-600">KES {parseFloat(reportData.operating_activities.inflow.total || 0).toLocaleString()}</p>
               </div>
               <div>
                 <p className="text-gray-600 text-sm">Outflows</p>
-                <p className="text-2xl font-bold text-red-600">KES {parseFloat(reportData.operating_activities.outflow.total).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-red-600">KES {parseFloat(reportData.operating_activities.outflow.total || 0).toLocaleString()}</p>
               </div>
             </div>
-            <p className="text-lg font-bold mt-3">Net: KES {parseFloat(reportData.operating_activities.net).toLocaleString()}</p>
+            <p className="text-lg font-bold mt-3">Net: KES {parseFloat(reportData.operating_activities.net || 0).toLocaleString()}</p>
           </div>
 
           <div>
             <h3 className="text-lg font-bold mb-3">Investing Activities</h3>
-            <p className="text-lg font-bold">Dividend Distributions: KES {parseFloat(reportData.investing_activities.outflow.dividend_distributions).toLocaleString()}</p>
+            <p className="text-lg font-bold">Dividend Distributions: KES {parseFloat(reportData.investing_activities.outflow.dividend_distributions || 0).toLocaleString()}</p>
           </div>
 
           <div className="bg-blue-50 p-4 rounded border-l-4 border-blue-500">
             <p className="text-gray-600">Net Cash Flow</p>
-            <p className="text-3xl font-bold text-blue-600">KES {parseFloat(reportData.net_cash_flow).toLocaleString()}</p>
+            <p className="text-3xl font-bold text-blue-600">KES {parseFloat(reportData.net_cash_flow || 0).toLocaleString()}</p>
           </div>
         </>
       )}
@@ -303,9 +338,9 @@ export default function AdvancedReporting() {
             <PieChart>
               <Pie
                 data={[
-                  { name: 'Active', value: reportData.summary.active_loans },
-                  { name: 'Repaid', value: Math.max(reportData.summary.total_loans - reportData.summary.active_loans, 0) },
-                  { name: 'Defaulted', value: reportData.summary.total_defaulted }
+                  { name: 'Active', value: parseInt(reportData.summary.active_loans || 0) },
+                  { name: 'Repaid', value: Math.max((parseInt(reportData.summary.total_loans || 0) - parseInt(reportData.summary.active_loans || 0)), 0) },
+                  { name: 'Defaulted', value: parseInt(reportData.summary.total_defaulted || 0) }
                 ]}
                 cx="50%"
                 cy="50%"
@@ -314,7 +349,7 @@ export default function AdvancedReporting() {
                 outerRadius={100}
               >
                 {COLORS.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index]} />
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip />
@@ -338,11 +373,11 @@ export default function AdvancedReporting() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Total Deposits</span>
-                <span className="font-semibold">KES {parseFloat(reportData.summary.total_amount).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.summary.total_amount || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Avg per Member</span>
-                <span className="font-semibold">KES {parseFloat(reportData.averages.average_per_member).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.averages?.average_per_member || 0).toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -354,15 +389,15 @@ export default function AdvancedReporting() {
             <div className="space-y-3">
               <div className="flex justify-between">
                 <span className="text-gray-600">Share Capital</span>
-                <span className="font-semibold">KES {parseFloat(reportData.by_category.share_capital).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.by_category.share_capital || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Emergency Fund</span>
-                <span className="font-semibold">KES {parseFloat(reportData.by_category.emergency_fund).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.by_category.emergency_fund || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Welfare</span>
-                <span className="font-semibold">KES {parseFloat(reportData.by_category.welfare).toLocaleString()}</span>
+                <span className="font-semibold">KES {parseFloat(reportData.by_category.welfare || 0).toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -376,6 +411,7 @@ export default function AdvancedReporting() {
       {/* Report Selector */}
       <div className="flex flex-wrap gap-2 bg-white p-4 rounded-lg shadow">
         {[
+          { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
           { id: 'balance-sheet', label: 'Balance Sheet', icon: FileText },
           { id: 'income-statement', label: 'Income Statement', icon: TrendingUp },
           { id: 'cash-flow', label: 'Cash Flow', icon: DollarSign },
@@ -384,7 +420,7 @@ export default function AdvancedReporting() {
         ].map((report) => (
           <button
             key={report.id}
-            onClick={() => setActiveReport(report.id)}
+            onClick={() => handleReportSwitch(report.id)}
             className={`px-4 py-2 rounded-lg font-medium transition ${
               activeReport === report.id
                 ? 'bg-indigo-600 text-white'
@@ -450,6 +486,7 @@ export default function AdvancedReporting() {
         <div className="bg-white p-6 rounded-lg shadow text-center text-gray-500">Loading report...</div>
       ) : reportData ? (
         <>
+          {activeReport === 'dashboard' && renderDashboard()}
           {activeReport === 'balance-sheet' && renderBalanceSheet()}
           {activeReport === 'income-statement' && renderIncomeStatement()}
           {activeReport === 'cash-flow' && renderCashFlow()}

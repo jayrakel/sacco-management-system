@@ -7,16 +7,26 @@ const QRCode = require('qrcode');
 
 // --- HELPER: FETCH SACCO BRANDING ---
 async function getSaccoDetails() {
-    const res = await db.query("SELECT setting_key, setting_value FROM system_settings WHERE category = 'SACCO' OR setting_key LIKE 'sacco_%'");
-    const settings = {};
-    res.rows.forEach(r => settings[r.setting_key] = r.setting_value);
-    return {
-        name: settings['sacco_name'] || 'Sacco System',
-        address: settings['sacco_address'] || 'P.O Box 12345, Nairobi, Kenya',
-        email: settings['sacco_email'] || 'info@sacco.com',
-        phone: settings['sacco_phone'] || '+254 700 000 000',
-        logo: settings['sacco_logo'] 
-    };
+    try {
+        const res = await db.query("SELECT setting_key, setting_value FROM system_settings WHERE category = 'SACCO' OR setting_key LIKE 'sacco_%'");
+        const settings = {};
+        res.rows.forEach(r => settings[r.setting_key] = r.setting_value);
+        return {
+            name: settings['sacco_name'] || 'Sacco System',
+            address: settings['sacco_address'] || 'P.O Box 12345, Nairobi, Kenya',
+            email: settings['sacco_email'] || 'info@sacco.com',
+            phone: settings['sacco_phone'] || '+254 700 000 000',
+            logo: settings['sacco_logo'] 
+        };
+    } catch (e) {
+        return {
+            name: 'Sacco System',
+            address: 'P.O Box 12345',
+            email: 'admin@sacco.com',
+            phone: '',
+            logo: null
+        };
+    }
 }
 
 // --- HELPER: DRAW BANK-GRADE HEADER ---
@@ -44,8 +54,6 @@ async function drawHeader(doc, title, user, details, serialNo) {
     
     // 4. Report Meta Data
     const topY = 150;
-    
-    // Safety check for user name
     const userName = user.full_name ? user.full_name.toUpperCase() : 'AUTHORIZED USER';
 
     // Left: Generated For
@@ -73,155 +81,194 @@ async function drawHeader(doc, title, user, details, serialNo) {
     doc.moveDown(0.5);
 }
 
+// Helpers for dates
+const getEndOfDay = (dateStr) => {
+    const d = dateStr ? new Date(dateStr) : new Date();
+    d.setHours(23, 59, 59, 999);
+    return d;
+};
+
+const getStartOfDay = (dateStr) => {
+    const d = dateStr ? new Date(dateStr) : new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+};
+
 // ========================================
-// 1. FINANCIAL REPORTS
+// 1. DASHBOARD & FINANCIAL REPORTS
 // ========================================
+
+// Dashboard Summary
+router.get('/dashboard-summary', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
+    try {
+        const portfolioRes = await db.query(`SELECT COALESCE(SUM(total_due - amount_repaid), 0) as total FROM loan_applications WHERE status = 'ACTIVE'`);
+        const depositsRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'COMPLETED'`);
+        const assetsRes = await db.query(`SELECT COALESCE(SUM(value), 0) as total FROM fixed_assets WHERE status = 'ACTIVE'`);
+        
+        const totalPortfolio = parseFloat(portfolioRes.rows[0].total) || 0;
+        const fixedAssets = parseFloat(assetsRes.rows[0].total) || 0;
+        const totalDeposits = parseFloat(depositsRes.rows[0].total) || 0;
+
+        const loansCountRes = await db.query(`SELECT COUNT(*) as count FROM loan_applications WHERE status = 'ACTIVE'`);
+        const activeLoans = parseInt(loansCountRes.rows[0].count) || 0;
+
+        const defaultRes = await db.query(`
+            SELECT 
+                COUNT(*) FILTER (WHERE status = 'DEFAULT') as defaulted,
+                COUNT(*) FILTER (WHERE status IN ('ACTIVE', 'COMPLETED', 'DEFAULT')) as total
+            FROM loan_applications
+        `);
+        const defaulted = parseInt(defaultRes.rows[0].defaulted) || 0;
+        const totalLoans = parseInt(defaultRes.rows[0].total) || 0;
+        const defaultRate = totalLoans > 0 ? ((defaulted / totalLoans) * 100).toFixed(1) + '%' : '0%';
+
+        res.json({
+            assets: { total: totalPortfolio + fixedAssets },
+            liabilities: { total: totalDeposits },
+            summary: { active_loans: activeLoans },
+            ratios: { default_rate: defaultRate }
+        });
+
+    } catch (error) {
+        console.error("Dashboard error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Balance Sheet Report
-router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
-    const { date } = req.query; 
-    const reportDate = date ? new Date(date) : new Date();
+    const reportDate = getEndOfDay(req.query.date);
 
-    // Assets
-    const assetsRes = await db.query(
-      `SELECT 
-        COALESCE(SUM(CASE WHEN (type = 'SHARE_CAPITAL' OR category = 'SHARE_CAPITAL') THEN amount ELSE 0 END), 0) as share_capital,
-        COALESCE(SUM(CASE WHEN (type IN ('DEPOSIT', 'SAVINGS') OR category IN ('DEPOSIT', 'SAVINGS')) THEN amount ELSE 0 END), 0) as member_savings,
-        COALESCE(SUM(CASE WHEN (type = 'EMERGENCY_FUND' OR category = 'EMERGENCY_FUND') THEN amount ELSE 0 END), 0) as emergency_fund
-       FROM deposits
-       WHERE created_at <= $1 AND status = 'COMPLETED'`,
-      [reportDate]
+    // --- ASSETS ---
+    // 1. Liquid Cash
+    const cashRes = await db.query(
+        `SELECT 
+            SUM(CASE WHEN type IN ('DEPOSIT', 'SAVINGS', 'SHARE_CAPITAL', 'REGISTRATION_FEE', 'LOAN_REPAYMENT') THEN amount ELSE 0 END) -
+            SUM(CASE WHEN type IN ('WITHDRAWAL', 'LOAN_DISBURSEMENT') THEN amount ELSE 0 END) as net_cash
+         FROM transactions WHERE status = 'COMPLETED' AND created_at <= $1`, [reportDate]
     );
-
-    const assets = assetsRes.rows[0];
-    const share_capital = parseFloat(assets.share_capital) || 0;
-    const member_savings = parseFloat(assets.member_savings) || 0;
-    const emergency_fund = parseFloat(assets.emergency_fund) || 0;
+    // 2. Expenses Outflow
+    const expRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM operational_expenses WHERE expense_date <= $1`, [reportDate]);
     
-    // Loan Outstanding
+    const rawCash = parseFloat(cashRes.rows[0].net_cash) || 0;
+    const totalExpenses = parseFloat(expRes.rows[0].total) || 0;
+    const cash_at_hand = rawCash - totalExpenses;
+
+    // 3. Loans
     const loansRes = await db.query(
-        `SELECT COALESCE(SUM(total_due - amount_repaid), 0) as outstanding 
-         FROM loan_applications 
-         WHERE status = 'ACTIVE' AND created_at <= $1`,
+        `SELECT COALESCE(SUM(total_due - amount_repaid), 0) as outstanding FROM loan_applications WHERE status = 'ACTIVE' AND created_at <= $1`,
         [reportDate]
     );
     const loans_outstanding = parseFloat(loansRes.rows[0].outstanding) || 0;
 
-    const totalAssets = share_capital + member_savings + loans_outstanding + emergency_fund;
+    // 4. Fixed Assets
+    const fixedRes = await db.query(
+        `SELECT 
+            COALESCE(SUM(value), 0) as total,
+            COALESCE(SUM(value) FILTER (WHERE type = 'LAND'), 0) as land,
+            COALESCE(SUM(value) FILTER (WHERE type = 'BUILDING'), 0) as buildings,
+            COALESCE(SUM(value) FILTER (WHERE type NOT IN ('LAND', 'BUILDING')), 0) as other
+         FROM fixed_assets WHERE status = 'ACTIVE' AND purchase_date <= $1`,
+        [reportDate]
+    );
+    const fixed_assets = fixedRes.rows[0];
 
-    // Liabilities
-    const liabilitiesRes = await db.query(
+    const totalAssets = cash_at_hand + loans_outstanding + (parseFloat(fixed_assets.total) || 0);
+
+    // --- LIABILITIES ---
+    const liabRes = await db.query(
       `SELECT 
-        COALESCE(SUM(total_due), 0) as member_liabilities,
-        COUNT(DISTINCT user_id) as member_count
-       FROM loan_applications
-       WHERE created_at <= $1 AND status IN ('ACTIVE', 'PENDING')`,
+        COALESCE(SUM(CASE WHEN type IN ('DEPOSIT', 'SAVINGS') THEN amount ELSE 0 END), 0) as member_savings,
+        COALESCE(SUM(CASE WHEN type = 'EMERGENCY_FUND' THEN amount ELSE 0 END), 0) as emergency_fund,
+        COALESCE(SUM(CASE WHEN type = 'WELFARE' THEN amount ELSE 0 END), 0) as welfare_fund
+       FROM deposits WHERE created_at <= $1 AND status = 'COMPLETED'`,
       [reportDate]
     );
+    const liabs = liabRes.rows[0];
+    const totalLiabilities = (parseFloat(liabs.member_savings)||0) + (parseFloat(liabs.emergency_fund)||0) + (parseFloat(liabs.welfare_fund)||0);
 
-    const liabilities = liabilitiesRes.rows[0];
-    const totalLiabilities = parseFloat(liabilities.member_liabilities) || 0;
+    // --- EQUITY ---
+    const eqRes = await db.query(
+        `SELECT COALESCE(SUM(amount), 0) as share_capital FROM deposits WHERE type = 'SHARE_CAPITAL' AND created_at <= $1`,
+        [reportDate]
+    );
+    const share_capital = parseFloat(eqRes.rows[0].share_capital) || 0;
+    const retained_earnings = totalAssets - (totalLiabilities + share_capital);
 
-    // Equity
-    const equity = totalAssets - totalLiabilities;
-
-    const report = {
+    res.json({
       report_type: 'BALANCE_SHEET',
       report_date: reportDate,
       assets: {
-        share_capital: share_capital,
-        member_savings: member_savings,
-        loans_outstanding: loans_outstanding,
-        emergency_fund: emergency_fund,
+        cash_at_hand,
+        loans_outstanding,
+        fixed_assets: {
+            total: parseFloat(fixed_assets.total) || 0,
+            land: parseFloat(fixed_assets.land) || 0,
+            buildings: parseFloat(fixed_assets.buildings) || 0,
+            other: parseFloat(fixed_assets.other) || 0
+        },
         total: totalAssets
       },
       liabilities: {
-        member_liabilities: totalLiabilities,
+        member_savings: parseFloat(liabs.member_savings)||0,
+        emergency_fund: parseFloat(liabs.emergency_fund)||0,
+        welfare_fund: parseFloat(liabs.welfare_fund)||0,
         total: totalLiabilities
       },
-      equity: equity,
-      total_liabilities_equity: totalLiabilities + equity
-    };
-
-    res.json(report);
-  } catch (error) {
-    console.error('Balance sheet error:', error);
-    res.status(500).json({ error: error.message });
-  }
+      equity: {
+        share_capital,
+        retained_earnings,
+        total: share_capital + retained_earnings
+      },
+      total_liabilities_equity: totalLiabilities + (share_capital + retained_earnings)
+    });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // Income Statement Report
-router.get('/financial/income-statement', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/financial/income-statement', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
-    const { start_date, end_date } = req.query;
-    const startDate = start_date ? new Date(start_date) : new Date(new Date().setMonth(new Date().getMonth() - 1));
-    const endDate = end_date ? new Date(end_date) : new Date();
+    const startDate = getStartOfDay(req.query.start_date);
+    const endDate = getEndOfDay(req.query.end_date);
 
     // Revenue
-    const interestRes = await db.query(
-      `SELECT COALESCE(SUM(interest_amount), 0) as total_interest
-       FROM loan_applications
-       WHERE created_at BETWEEN $1 AND $2 AND status IN ('ACTIVE', 'COMPLETED')`,
-      [startDate, endDate]
-    );
+    const interestRes = await db.query(`SELECT COALESCE(SUM(interest_amount), 0) as val FROM loan_applications WHERE created_at BETWEEN $1 AND $2`, [startDate, endDate]);
+    const penaltyRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as val FROM transactions WHERE (type = 'PENALTY' OR type = 'FINE' OR type = 'REGISTRATION_FEE') AND created_at BETWEEN $1 AND $2`, [startDate, endDate]);
+    
+    const interest = parseFloat(interestRes.rows[0].val);
+    const penalties = parseFloat(penaltyRes.rows[0].val);
+    const revenue = interest + penalties;
 
     // Expenses
-    const penaltiesRes = await db.query(
-      `SELECT COALESCE(SUM(amount), 0) as total_penalties
-       FROM transactions
-       WHERE (type = 'PENALTY' OR type = 'FINE') AND created_at BETWEEN $1 AND $2`,
-      [startDate, endDate]
+    const expRes = await db.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM operational_expenses WHERE expense_date BETWEEN $1 AND $2`,
+        [startDate, endDate]
     );
+    const operating_expenses = parseFloat(expRes.rows[0].total) || 0;
 
-    // Dividends
-    let dividends = 0;
-    try {
-        const dividendsRes = await db.query(
-          `SELECT COALESCE(SUM(dividend_amount), 0) as total_dividends_paid
-           FROM dividend_allocations
-           WHERE status = 'PAID' AND payment_date BETWEEN $1 AND $2`,
-          [startDate, endDate]
-        );
-        dividends = parseFloat(dividendsRes.rows[0].total_dividends_paid);
-    } catch(e) { dividends = 0; }
+    const divRes = await db.query(`SELECT COALESCE(SUM(dividend_amount), 0) as val FROM dividend_allocations WHERE status = 'PAID' AND payment_date BETWEEN $1 AND $2`, [startDate, endDate]);
+    const dividends = parseFloat(divRes.rows[0].val) || 0;
 
-    const interest = parseFloat(interestRes.rows[0].total_interest);
-    const penalties = parseFloat(penaltiesRes.rows[0].total_penalties);
+    const totalExpenses = operating_expenses + dividends;
+    const netIncome = revenue - totalExpenses;
 
-    const revenue = interest + penalties;
-    const expenses = dividends;
-    const netIncome = revenue - expenses;
-
-    const report = {
+    res.json({
       report_type: 'INCOME_STATEMENT',
       period: { start: startDate, end: endDate },
-      revenue: {
-        interest_earned: interest,
-        penalties_collected: penalties,
-        total: revenue
-      },
-      expenses: {
-        dividends_paid: dividends,
-        total: expenses
-      },
+      revenue: { interest_earned: interest, fees_and_fines: penalties, total: revenue },
+      expenses: { operating: operating_expenses, dividends_paid: dividends, total: totalExpenses },
       net_income: netIncome,
       profit_margin: revenue > 0 ? ((netIncome / revenue) * 100).toFixed(2) + '%' : '0%'
-    };
-
-    res.json(report);
-  } catch (error) {
-    console.error('Income statement error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // Cash Flow Report
-router.get('/financial/cash-flow', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/financial/cash-flow', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
-    const { start_date, end_date } = req.query;
-    const startDate = start_date ? new Date(start_date) : new Date(new Date().setMonth(new Date().getMonth() - 1));
-    const endDate = end_date ? new Date(end_date) : new Date();
+    const startDate = getStartOfDay(req.query.start_date);
+    const endDate = getEndOfDay(req.query.end_date);
 
     const operatingRes = await db.query(
       `SELECT 
@@ -229,13 +276,19 @@ router.get('/financial/cash-flow', authenticateUser, authorizeRoles('ADMIN', 'TR
         SUM(CASE WHEN type IN ('WITHDRAWAL', 'LOAN_DISBURSEMENT') THEN amount ELSE 0 END) as money_out,
         SUM(CASE WHEN type = 'LOAN_REPAYMENT' THEN amount ELSE 0 END) as loan_repayments
        FROM transactions
-       WHERE created_at BETWEEN $1 AND $2 AND status = 'COMPLETED'`,
+       WHERE created_at BETWEEN $1 AND $2 AND (status = 'COMPLETED' OR status IS NULL)`, 
       [startDate, endDate]
     );
 
-    const operating = operatingRes.rows[0];
+    const expenseRes = await db.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM operational_expenses WHERE expense_date BETWEEN $1 AND $2`,
+        [startDate, endDate]
+    );
+    const opExpenses = parseFloat(expenseRes.rows[0].total) || 0;
+
+    const operating = operatingRes.rows[0] || {};
     const operatingInflow = (parseFloat(operating.money_in) || 0) + (parseFloat(operating.loan_repayments) || 0);
-    const operatingOutflow = (parseFloat(operating.money_out) || 0);
+    const operatingOutflow = (parseFloat(operating.money_out) || 0) + opExpenses;
 
     let investingOutflow = 0;
     try {
@@ -245,46 +298,28 @@ router.get('/financial/cash-flow', authenticateUser, authorizeRoles('ADMIN', 'TR
            WHERE status = 'PAID' AND payment_date BETWEEN $1 AND $2`,
           [startDate, endDate]
         );
-        investingOutflow = parseFloat(investingRes.rows[0].dividend_distributions);
+        investingOutflow = parseFloat(investingRes.rows[0].dividend_distributions) || 0;
     } catch(e) { investingOutflow = 0; }
 
-    const report = {
+    res.json({
       report_type: 'CASH_FLOW',
       period: { start: startDate, end: endDate },
       operating_activities: {
-        inflow: {
-          deposits_and_fees: parseFloat(operating.money_in) || 0,
-          loan_repayments: parseFloat(operating.loan_repayments) || 0,
-          total: operatingInflow
-        },
-        outflow: {
-          disbursements_and_withdrawals: operatingOutflow,
-          total: operatingOutflow
-        },
+        inflow: { deposits_and_fees: parseFloat(operating.money_in) || 0, loan_repayments: parseFloat(operating.loan_repayments) || 0, total: operatingInflow },
+        outflow: { disbursements_and_withdrawals: parseFloat(operating.money_out) || 0, operational_expenses: opExpenses, total: operatingOutflow },
         net: operatingInflow - operatingOutflow
       },
-      investing_activities: {
-        outflow: {
-          dividend_distributions: investingOutflow,
-          total: investingOutflow
-        },
-        net: -investingOutflow
-      },
+      investing_activities: { outflow: { dividend_distributions: investingOutflow, total: investingOutflow }, net: -investingOutflow },
       net_cash_flow: (operatingInflow - operatingOutflow - investingOutflow)
-    };
-
-    res.json(report);
-  } catch (error) {
-    console.error('Cash flow error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    });
+  } catch (error) { console.error('Cash flow error:', error); res.status(500).json({ error: error.message }); }
 });
 
 // ========================================
 // 2. ANALYTICS ROUTES
 // ========================================
 
-router.get('/analytics/loans', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/analytics/loans', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
     const loansRes = await db.query(
       `SELECT 
@@ -296,44 +331,34 @@ router.get('/analytics/loans', authenticateUser, authorizeRoles('ADMIN', 'TREASU
         COALESCE(SUM(total_due) FILTER (WHERE status = 'OVERDUE'), 0) as total_overdue,
         COALESCE(AVG(amount_requested), 0) as avg_loan_amount,
         COALESCE(AVG(interest_amount), 0) as avg_interest
-       FROM loan_applications
-       WHERE created_at >= NOW() - INTERVAL '1 year'`
+       FROM loan_applications`
     );
-
     const loans = loansRes.rows[0] || {};
     const total_loans = parseInt(loans.total_loans) || 0;
     const total_defaulted = parseInt(loans.total_defaulted) || 0;
-    const total_overdue = parseInt(loans.total_overdue) || 0;
-
-    const analytics = {
+    
+    res.json({
       summary: {
         active_loans: parseInt(loans.active_loans) || 0,
         total_loans: total_loans,
         total_portfolio: parseFloat(loans.total_outstanding) || 0,
         total_repaid: parseFloat(loans.total_repaid) || 0,
         total_defaulted: total_defaulted,
-        total_overdue: total_overdue
+        total_overdue: parseInt(loans.total_overdue) || 0
       },
       ratios: {
         default_rate: total_loans > 0 ? ((total_defaulted / total_loans) * 100).toFixed(2) + '%' : '0%',
-        overdue_rate: total_loans > 0 ? ((total_overdue / total_loans) * 100).toFixed(2) + '%' : '0%',
         repayment_rate: total_loans > 0 ? (((total_loans - total_defaulted) / total_loans) * 100).toFixed(2) + '%' : '0%'
       },
       averages: {
         average_loan: loans.avg_loan_amount ? parseFloat(loans.avg_loan_amount).toFixed(2) : 0,
-        average_interest: loans.avg_interest ? parseFloat(loans.avg_interest).toFixed(2) : 0,
-        average_term_days: 30
+        average_interest: loans.avg_interest ? parseFloat(loans.avg_interest).toFixed(2) : 0
       }
-    };
-
-    res.json(analytics);
-  } catch (error) {
-    console.error('Loan analytics error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    });
+  } catch (error) { console.error('Loan analytics error:', error); res.status(500).json({ error: error.message }); }
 });
 
-router.get('/analytics/deposits', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/analytics/deposits', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
     const depositsRes = await db.query(
       `SELECT 
@@ -344,20 +369,14 @@ router.get('/analytics/deposits', authenticateUser, authorizeRoles('ADMIN', 'TRE
         COALESCE(SUM(CASE WHEN (type = 'SHARE_CAPITAL' OR category = 'SHARE_CAPITAL') THEN amount ELSE 0 END), 0) as share_capital_total,
         COALESCE(SUM(CASE WHEN (type = 'EMERGENCY_FUND' OR category = 'EMERGENCY_FUND') THEN amount ELSE 0 END), 0) as emergency_fund_total,
         COALESCE(SUM(CASE WHEN (type = 'WELFARE' OR category = 'WELFARE') THEN amount ELSE 0 END), 0) as welfare_total
-       FROM deposits
-       WHERE status = 'COMPLETED' AND created_at >= NOW() - INTERVAL '1 year'`
+       FROM deposits WHERE status = 'COMPLETED'`
     );
-
     const deposits = depositsRes.rows[0] || {};
     const total_members = parseInt(deposits.total_members) || 0;
     const total_amount = parseFloat(deposits.total_amount) || 0;
 
-    const analytics = {
-      summary: {
-        total_members: total_members,
-        total_deposits: parseInt(deposits.total_deposits) || 0,
-        total_amount: total_amount
-      },
+    res.json({
+      summary: { total_members, total_deposits: parseInt(deposits.total_deposits)||0, total_amount },
       by_category: {
         share_capital: parseFloat(deposits.share_capital_total) || 0,
         emergency_fund: parseFloat(deposits.emergency_fund_total) || 0,
@@ -365,80 +384,55 @@ router.get('/analytics/deposits', authenticateUser, authorizeRoles('ADMIN', 'TRE
       },
       averages: {
         average_deposit: deposits.avg_deposit ? parseFloat(deposits.avg_deposit).toFixed(2) : 0,
-        average_per_member: total_members > 0 
-          ? (total_amount / total_members).toFixed(2) 
-          : 0
+        average_per_member: total_members > 0 ? (total_amount / total_members).toFixed(2) : 0
       }
-    };
-
-    res.json(analytics);
-  } catch (error) {
-    console.error('Deposit analytics error:', error);
-    res.status(500).json({ error: error.message });
-  }
+    });
+  } catch (error) { console.error('Deposit analytics error:', error); res.status(500).json({ error: error.message }); }
 });
 
-router.get('/member-performance', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/member-performance', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
     const { limit = 20, offset = 0 } = req.query;
-
     const result = await db.query(
-      `SELECT 
-        u.id, u.full_name, u.email, u.phone_number,
+      `SELECT u.id, u.full_name, u.email, u.phone_number,
         COUNT(DISTINCT d.id) as total_deposits,
         COALESCE(SUM(d.amount) FILTER (WHERE d.status = 'COMPLETED'), 0) as total_deposit_amount,
         COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'ACTIVE') as active_loans,
         COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'COMPLETED') as completed_loans,
         COALESCE(SUM(l.total_due) FILTER (WHERE l.status = 'DEFAULT'), 0) as defaulted_amount,
-        CASE 
-          WHEN (SELECT COUNT(*) FROM loan_applications WHERE user_id = u.id AND status = 'DEFAULT') > 0 THEN 'DEFAULTED'
-          WHEN (SELECT SUM(total_due - amount_repaid) FROM loan_applications WHERE user_id = u.id AND status = 'OVERDUE') > 0 THEN 'OVERDUE'
-          WHEN (SELECT COUNT(*) FROM deposits WHERE user_id = u.id AND status = 'COMPLETED') > 0 THEN 'ACTIVE'
-          ELSE 'INACTIVE'
-        END as account_status
+        CASE WHEN (SELECT COUNT(*) FROM loan_applications WHERE user_id = u.id AND status = 'DEFAULT') > 0 THEN 'DEFAULTED'
+             WHEN (SELECT SUM(total_due - amount_repaid) FROM loan_applications WHERE user_id = u.id AND status = 'OVERDUE') > 0 THEN 'OVERDUE'
+             WHEN (SELECT COUNT(*) FROM deposits WHERE user_id = u.id AND status = 'COMPLETED') > 0 THEN 'ACTIVE'
+             ELSE 'INACTIVE' END as account_status
        FROM users u
        LEFT JOIN deposits d ON u.id = d.user_id
        LEFT JOIN loan_applications l ON u.id = l.user_id
        WHERE u.role = 'MEMBER'
        GROUP BY u.id, u.full_name, u.email, u.phone_number
-       ORDER BY total_deposit_amount DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       ORDER BY total_deposit_amount DESC LIMIT $1 OFFSET $2`, [limit, offset]
     );
-
     res.json(result.rows);
-  } catch (error) {
-    console.error('Member performance error:', error);
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.get('/transaction-summary', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/transaction-summary', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
     const { period = 'daily', start_date, end_date } = req.query;
-    const startDate = start_date ? new Date(start_date) : new Date(new Date().setMonth(new Date().getMonth() - 1));
-    const endDate = end_date ? new Date(end_date) : new Date();
-
+    const startDate = getStartOfDay(start_date);
+    const endDate = getEndOfDay(end_date);
     let groupBy = "DATE_TRUNC('day', created_at)";
     if (period === 'weekly') groupBy = "DATE_TRUNC('week', created_at)";
     if (period === 'monthly') groupBy = "DATE_TRUNC('month', created_at)";
 
     const result = await db.query(
-      `SELECT 
-        ${groupBy} as period,
+      `SELECT ${groupBy} as period,
         SUM(CASE WHEN type IN ('DEPOSIT','LOAN_REPAYMENT','SHARE_CAPITAL') THEN amount ELSE 0 END) as inflow,
         SUM(CASE WHEN type IN ('WITHDRAWAL','LOAN_DISBURSEMENT') THEN amount ELSE 0 END) as outflow,
         COUNT(DISTINCT id) as transaction_count,
-        COUNT(DISTINCT user_id) as unique_members,
-        COUNT(DISTINCT CASE WHEN type IN ('DEPOSIT','LOAN_REPAYMENT') THEN user_id END) as depositors,
-        COUNT(DISTINCT CASE WHEN type IN ('WITHDRAWAL','LOAN_DISBURSEMENT') THEN user_id END) as withdrawers
-       FROM transactions
-       WHERE status = 'COMPLETED' AND created_at BETWEEN $1 AND $2
-       GROUP BY ${groupBy}
-       ORDER BY period DESC`,
-      [startDate, endDate]
+        COUNT(DISTINCT user_id) as unique_members
+       FROM transactions WHERE (status = 'COMPLETED' OR status IS NULL) AND created_at BETWEEN $1 AND $2
+       GROUP BY ${groupBy} ORDER BY period DESC`, [startDate, endDate]
     );
-
     res.json({
       period_type: period,
       date_range: { start: startDate, end: endDate },
@@ -448,140 +442,124 @@ router.get('/transaction-summary', authenticateUser, authorizeRoles('ADMIN', 'TR
         outflow: row.outflow || 0,
         net_flow: (row.inflow || 0) - (row.outflow || 0),
         transaction_count: row.transaction_count,
-        unique_members: row.unique_members,
-        depositors: row.depositors,
-        withdrawers: row.withdrawers
+        unique_members: row.unique_members
       }))
     });
-  } catch (error) {
-    console.error('Transaction summary error:', error);
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 // ========================================
-// 6. EXPORT REPORTS (PDF & CSV)
+// 6. EXPORT REPORTS
 // ========================================
 
-router.get('/export/:report_type', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON'), async (req, res) => {
+router.get('/export/:report_type', authenticateUser, authorizeRoles('ADMIN', 'TREASURER', 'CHAIRPERSON', 'SECRETARY'), async (req, res) => {
   try {
     const { report_type } = req.params;
     const { format = 'json', start_date, end_date } = req.query; 
-
-    const startDate = start_date ? new Date(start_date) : new Date(new Date().setMonth(new Date().getMonth() - 1));
-    const endDate = end_date ? new Date(end_date) : new Date();
-
-    // FETCH USER DETAILS TO PREVENT UNDEFINED ERROR
+    const startDate = getStartOfDay(start_date);
+    const endDate = getEndOfDay(end_date);
     const userRes = await db.query("SELECT * FROM users WHERE id = $1", [req.user.id]);
     const user = userRes.rows[0] || req.user; 
-    
-    // Fallback if full_name is missing
     if (!user.full_name) user.full_name = 'Authorized User';
 
-    // 1. GENERATE PDF
     if (format === 'pdf') {
         const doc = new PDFDocument({ margin: 50, size: 'A4' });
         const serialNo = `RPT-${Date.now().toString().slice(-6)}`;
         const sacco = await getSaccoDetails();
-        
-        // Setup headers
         const filename = `${report_type.toUpperCase()}_${new Date().toISOString().slice(0,10)}.pdf`;
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
         doc.pipe(res);
-
-        // Draw Standard Header
         await drawHeader(doc, report_type.replace(/-/g, ' ') + ' Report', user, sacco, serialNo);
-
         let y = doc.y + 20;
 
-        // --- FETCH DATA & RENDER BASED ON TYPE ---
+        const drawRow = (label, val, isBold=false) => {
+            if(isBold) doc.font('Helvetica-Bold'); else doc.font('Helvetica');
+            doc.text(label, 50, y);
+            doc.text(`KES ${val.toLocaleString()}`, 350, y, { align: 'right' });
+            y += 20;
+        };
         
         if (report_type === 'balance-sheet') {
-            const assetsRes = await db.query(
-                `SELECT 
-                    COALESCE(SUM(CASE WHEN (type = 'SHARE_CAPITAL' OR category = 'SHARE_CAPITAL') THEN amount ELSE 0 END), 0) as share_capital,
-                    COALESCE(SUM(CASE WHEN (type IN ('DEPOSIT', 'SAVINGS') OR category IN ('DEPOSIT', 'SAVINGS')) THEN amount ELSE 0 END), 0) as member_savings,
-                    COALESCE(SUM(CASE WHEN (type = 'EMERGENCY_FUND' OR category = 'EMERGENCY_FUND') THEN amount ELSE 0 END), 0) as emergency_fund
-                FROM deposits WHERE created_at <= $1 AND status = 'COMPLETED'`, [endDate]
-            );
             const loansRes = await db.query(`SELECT COALESCE(SUM(total_due - amount_repaid), 0) as outstanding FROM loan_applications WHERE status = 'ACTIVE' AND created_at <= $1`, [endDate]);
-            const liabilitiesRes = await db.query(`SELECT COALESCE(SUM(total_due), 0) as member_liabilities FROM loan_applications WHERE created_at <= $1 AND status IN ('ACTIVE', 'PENDING')`, [endDate]);
+            const cashRes = await db.query(`SELECT SUM(CASE WHEN type IN ('DEPOSIT', 'SAVINGS', 'SHARE_CAPITAL', 'REGISTRATION_FEE', 'LOAN_REPAYMENT') THEN amount ELSE 0 END) - SUM(CASE WHEN type IN ('WITHDRAWAL', 'LOAN_DISBURSEMENT') THEN amount ELSE 0 END) as net_cash FROM transactions WHERE status = 'COMPLETED' AND created_at <= $1`, [endDate]);
+            const expRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM operational_expenses WHERE expense_date <= $1`, [endDate]);
+            const fixedRes = await db.query(`SELECT COALESCE(SUM(value), 0) as total FROM fixed_assets WHERE status = 'ACTIVE' AND purchase_date <= $1`, [endDate]);
 
-            const assets = assetsRes.rows[0];
             const loans_outstanding = parseFloat(loansRes.rows[0].outstanding) || 0;
-            const totalLiabilities = parseFloat(liabilitiesRes.rows[0].member_liabilities) || 0;
-            const totalAssets = (parseFloat(assets.share_capital)||0) + (parseFloat(assets.member_savings)||0) + loans_outstanding + (parseFloat(assets.emergency_fund)||0);
-            const equity = totalAssets - totalLiabilities;
+            const cash_at_hand = (parseFloat(cashRes.rows[0].net_cash) || 0) - (parseFloat(expRes.rows[0].total) || 0);
+            const fixed_assets = parseFloat(fixedRes.rows[0].total) || 0;
+            const totalAssets = loans_outstanding + cash_at_hand + fixed_assets;
+            
+            const liabRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE type IN ('DEPOSIT','SAVINGS','EMERGENCY_FUND','WELFARE') AND created_at <= $1`, [endDate]);
+            const equityRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE type='SHARE_CAPITAL' AND created_at <= $1`, [endDate]);
 
-            // Draw Tables
-            const drawRow = (label, val, isBold=false) => {
-                if(isBold) doc.font('Helvetica-Bold'); else doc.font('Helvetica');
-                doc.text(label, 50, y);
-                doc.text(`KES ${val.toLocaleString()}`, 350, y, { align: 'right' });
-                y += 20;
-            };
+            const totalLiabilities = parseFloat(liabRes.rows[0].total) || 0;
+            const share_capital = parseFloat(equityRes.rows[0].total) || 0;
+            const retained_earnings = totalAssets - (totalLiabilities + share_capital);
 
             doc.font('Helvetica-Bold').fontSize(12).text('ASSETS', 50, y); y += 20;
             doc.fontSize(10);
-            drawRow('Share Capital', parseFloat(assets.share_capital)||0);
-            drawRow('Member Savings', parseFloat(assets.member_savings)||0);
-            drawRow('Loans Outstanding', loans_outstanding);
-            drawRow('Emergency Fund', parseFloat(assets.emergency_fund)||0);
+            drawRow('Cash & Equivalents', cash_at_hand);
+            drawRow('Loan Portfolio', loans_outstanding);
+            drawRow('Fixed Assets (Land/Bldg)', fixed_assets);
             doc.moveTo(50, y).lineTo(550, y).stroke(); y+=5;
             drawRow('TOTAL ASSETS', totalAssets, true);
             
             y += 20;
-            doc.font('Helvetica-Bold').fontSize(12).text('LIABILITIES & EQUITY', 50, y); y += 20;
+            doc.font('Helvetica-Bold').fontSize(12).text('LIABILITIES', 50, y); y += 20;
             doc.fontSize(10);
-            drawRow('Member Liabilities', totalLiabilities);
-            drawRow('Total Equity', equity);
+            drawRow('Member Deposits', totalLiabilities);
             doc.moveTo(50, y).lineTo(550, y).stroke(); y+=5;
-            drawRow('TOTAL L&E', totalLiabilities + equity, true);
+            drawRow('TOTAL LIABILITIES', totalLiabilities, true);
+
+            y += 20;
+            doc.font('Helvetica-Bold').fontSize(12).text('EQUITY', 50, y); y += 20;
+            doc.fontSize(10);
+            drawRow('Share Capital', share_capital);
+            drawRow('Retained Earnings', retained_earnings);
+            doc.moveTo(50, y).lineTo(550, y).stroke(); y+=5;
+            drawRow('TOTAL EQUITY', share_capital + retained_earnings, true);
 
         } else if (report_type === 'income-statement') {
             const interestRes = await db.query(`SELECT COALESCE(SUM(interest_amount), 0) as val FROM loan_applications WHERE created_at BETWEEN $1 AND $2`, [startDate, endDate]);
             const penaltyRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as val FROM transactions WHERE (type = 'PENALTY' OR type = 'FINE') AND created_at BETWEEN $1 AND $2`, [startDate, endDate]);
+            const expRes = await db.query(`SELECT COALESCE(SUM(amount), 0) as total FROM operational_expenses WHERE expense_date BETWEEN $1 AND $2`, [startDate, endDate]);
             
             const interest = parseFloat(interestRes.rows[0].val);
             const penalties = parseFloat(penaltyRes.rows[0].val);
+            const expenses = parseFloat(expRes.rows[0].total);
             const revenue = interest + penalties;
+            const netIncome = revenue - expenses;
             
-            const drawRow = (label, val, isBold=false) => {
-                if(isBold) doc.font('Helvetica-Bold'); else doc.font('Helvetica');
-                doc.text(label, 50, y);
-                doc.text(`KES ${val.toLocaleString()}`, 350, y, { align: 'right' });
-                y += 20;
-            };
-
             doc.font('Helvetica-Bold').fontSize(12).text('REVENUE', 50, y); y += 20;
             doc.fontSize(10);
             drawRow('Interest Earned', interest);
-            drawRow('Penalties', penalties);
+            drawRow('Penalties & Fees', penalties);
             doc.moveTo(50, y).lineTo(550, y).stroke(); y+=5;
             drawRow('TOTAL REVENUE', revenue, true);
 
             y += 20;
+            doc.font('Helvetica-Bold').fontSize(12).text('EXPENSES', 50, y); y += 20;
+            doc.fontSize(10);
+            drawRow('Operational Expenses', expenses);
+            doc.moveTo(50, y).lineTo(550, y).stroke(); y+=5;
+            drawRow('TOTAL EXPENSES', expenses, true);
+
+            y += 20;
             doc.font('Helvetica-Bold').fontSize(12).text('NET INCOME', 50, y); y += 20;
-            doc.fontSize(14).fillColor('green');
-            drawRow('NET PROFIT', revenue, true);
+            doc.fontSize(14).fillColor(netIncome >= 0 ? 'green' : 'red');
+            drawRow('NET PROFIT', netIncome, true);
         } else {
-            // Generic Fallback
             doc.fontSize(10).text("Detailed PDF export for this report type is under construction.", 50, y);
-            doc.text("Please use CSV export for full data analysis.", 50, y+15);
         }
-
         doc.end();
-
-    } else if (format === 'csv') {
+    } else {
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${report_type}_${new Date().toISOString()}.csv"`);
-      res.send("Date,Item,Amount\n2023-01-01,Placeholder Data,0"); 
-    } else {
-      res.status(501).json({ error: 'Export format not implemented' });
+      res.send("Date,Item,Amount\n"); 
     }
   } catch (error) {
-    console.error('Export report error:', error);
     if (!res.headersSent) res.status(500).json({ error: error.message });
   }
 });

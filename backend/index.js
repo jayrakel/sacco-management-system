@@ -54,6 +54,46 @@ const reportRoutes = require('./modules/reports/routes');
 const dividendRoutes = require('./modules/dividends/routes');
 const advancedReportRoutes = require('./modules/reports/advanced.routes');
 
+// --- NEW ASSET & EXPENSE ROUTES ---
+const router = express.Router();
+const { authenticateUser } = require('./modules/auth/middleware');
+
+// Assets Route
+router.get('/assets', authenticateUser, async (req, res) => {
+    try {
+        const result = await db.query("SELECT * FROM fixed_assets WHERE status = 'ACTIVE' ORDER BY created_at DESC");
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/assets', authenticateUser, async (req, res) => {
+    try {
+        const { name, type, value, location, description } = req.body;
+        await db.query(
+            "INSERT INTO fixed_assets (name, type, value, location, description, added_by) VALUES ($1, $2, $3, $4, $5, $6)",
+            [name, type, value, location, description, req.user.id]
+        );
+        res.json({ message: "Asset added" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Expenses Route
+router.get('/expenses', authenticateUser, async (req, res) => {
+    try {
+        const result = await db.query("SELECT * FROM operational_expenses ORDER BY expense_date DESC");
+        res.json(result.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/expenses', authenticateUser, async (req, res) => {
+    try {
+        const { title, category, amount, description, receipt_ref } = req.body;
+        await db.query(
+            "INSERT INTO operational_expenses (title, category, amount, description, receipt_ref, incurred_by) VALUES ($1, $2, $3, $4, $5, $6)",
+            [title, category, amount, description, receipt_ref, req.user.id]
+        );
+        res.json({ message: "Expense recorded" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.use('/api/auth', loginLimiter, authRoutes); 
 app.use('/api/loan', apiLimiter, loanRoutes); 
 app.use('/api/payments', apiLimiter, paymentRoutes); 
@@ -62,86 +102,22 @@ app.use('/api/settings', settingsModule.router);
 app.use('/api/reports', apiLimiter, reportRoutes);
 app.use('/api/dividends', apiLimiter, dividendRoutes);
 app.use('/api/advanced-reports', apiLimiter, advancedReportRoutes);
+app.use('/api/management', apiLimiter, router); // Mount new routes under /management
+app.use('/api/management', apiLimiter, require('./modules/management/routes'));
 
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).json({ error: "Internal System Error" });
 });
 
-// --- SYSTEM INITIALIZATION & AUTO-MIGRATION ---
+// --- SYSTEM INITIALIZATION ---
 const initializeSystem = async () => {
     try {
         await db.query('SELECT NOW()');
         console.log("✅ Database Connected");
-
-        console.log("⚙️  Checking Database Schema...");
-        // Auto-fix missing columns safely
-        await db.query(`
-            DO $$ 
-            BEGIN 
-                -- 1. Fix Transactions Table
-                BEGIN
-                    ALTER TABLE transactions ADD COLUMN status VARCHAR(50) DEFAULT 'COMPLETED';
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE transactions ADD COLUMN merchant_request_id VARCHAR(100);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE transactions ADD COLUMN checkout_request_id VARCHAR(100);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-
-                -- 2. Fix Users Table (Security & KYC)
-                BEGIN
-                    ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE;
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN DEFAULT FALSE;
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN verification_token VARCHAR(255);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN id_number VARCHAR(20);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN kra_pin VARCHAR(20);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN next_of_kin_name VARCHAR(100);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN next_of_kin_phone VARCHAR(20);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN next_of_kin_relation VARCHAR(50);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN profile_image TEXT;
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-
-                -- 3. Fix Deposits Table (The cause of your error)
-                BEGIN
-                    ALTER TABLE deposits ADD COLUMN category VARCHAR(50) DEFAULT 'DEPOSIT';
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-            END $$;
-        `);
-
-        // Create Custom Contribution Categories Table if missing
-        await db.query(`
-            CREATE TABLE IF NOT EXISTS contribution_categories (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL UNIQUE,
-                description TEXT,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
-        console.log("✅ Schema Verified (Columns synced automatically)");
-
-        // Create Default Admin if no users exist
+        // Ensure Admin exists
         const result = await db.query("SELECT COUNT(*) FROM users");
         if (parseInt(result.rows[0].count) === 0) {
-            console.log("⚠️ No users found. Creating Default Admin...");
             const hash = await bcrypt.hash('S@cc0_.Adm!n123', 10);
             await db.query(
                 `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password, is_email_verified) 

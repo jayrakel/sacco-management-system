@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
     ClipboardList, CheckCircle, FileText, Megaphone, 
-    BarChart3, XCircle, Calendar, Clock, List
+    BarChart3, XCircle, Calendar, Clock, List,
+    Landmark, Receipt // Added for Assets & Expenses
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function SecretaryDashboard({ user, onLogout }) {
-    // Tabs: 'review' (Incoming) | 'meetings' (Voting/Tally) | 'portfolio' (Reporting)
+    // Tabs: 'review', 'meetings', 'portfolio', 'assets', 'expenses'
     const [activeTab, setActiveTab] = useState('review');
     
     // Data States
@@ -15,11 +16,17 @@ export default function SecretaryDashboard({ user, onLogout }) {
     const [liveTally, setLiveTally] = useState([]);     // Loans currently being voted on
     const [portfolio, setPortfolio] = useState([]);     // Active Loans for Reporting
     
+    // NEW: Assets & Expenses State
+    const [assets, setAssets] = useState([]);
+    const [expenses, setExpenses] = useState([]);
+    
+    // Forms
+    const [meetingForm, setMeetingForm] = useState({ meetingDate: '', extraAgendas: '' });
+    const [newAsset, setNewAsset] = useState({ name: '', type: 'LAND', value: '', location: '', description: '' });
+    const [newExpense, setNewExpense] = useState({ title: '', category: 'GENERAL', amount: '', description: '' });
+
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
-
-    // Form for meeting announcement
-    const [meetingForm, setMeetingForm] = useState({ meetingDate: '', extraAgendas: '' });
 
     // Fetch Data
     useEffect(() => {
@@ -28,15 +35,25 @@ export default function SecretaryDashboard({ user, onLogout }) {
                 if (activeTab === 'review') {
                     // Fetch submitted loans waiting for secretary review
                     const res = await api.get('/api/loan/agenda');
-                    setReviewQueue(res.data);
+                    setReviewQueue(res.data || []);
                 } else if (activeTab === 'meetings') {
                     // Fetch live voting results
                     const res = await api.get('/api/loan/secretary/live-tally');
-                    setLiveTally(res.data);
+                    setLiveTally(res.data || []);
                 } else if (activeTab === 'portfolio') {
-                    // NEW: Fetch all active loans
+                    // Fetch all active loans
                     const res = await api.get('/api/reports/active-portfolio');
-                    setPortfolio(res.data);
+                    setPortfolio(res.data || []);
+                } 
+                // NEW: Fetch Assets
+                else if (activeTab === 'assets') {
+                    const res = await api.get('/api/management/assets');
+                    setAssets(res.data || []);
+                } 
+                // NEW: Fetch Expenses
+                else if (activeTab === 'expenses') {
+                    const res = await api.get('/api/management/expenses');
+                    setExpenses(res.data || []);
                 }
             } catch (err) {
                 console.error("Error loading data", err);
@@ -83,6 +100,39 @@ export default function SecretaryDashboard({ user, onLogout }) {
         }
     };
 
+    // --- NEW HANDLERS FOR ASSETS & EXPENSES ---
+    const handleAddAsset = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/api/management/assets', newAsset);
+            alert("Asset Added Successfully!");
+            setNewAsset({ name: '', type: 'LAND', value: '', location: '', description: '' });
+            // Refresh list immediately
+            const res = await api.get('/api/management/assets');
+            setAssets(res.data);
+        } catch(e) { 
+            alert(e.response?.data?.error || "Failed to add asset"); 
+        }
+        setLoading(false);
+    };
+
+    const handleAddExpense = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        try {
+            await api.post('/api/management/expenses', newExpense);
+            alert("Expense Recorded Successfully!");
+            setNewExpense({ title: '', category: 'GENERAL', amount: '', description: '' });
+            // Refresh list immediately
+            const res = await api.get('/api/management/expenses');
+            setExpenses(res.data);
+        } catch(e) { 
+            alert(e.response?.data?.error || "Failed to record expense"); 
+        }
+        setLoading(false);
+    };
+
     // --- UI HELPERS ---
     const renderTabButton = (id, label, icon) => (
         <button 
@@ -109,10 +159,13 @@ export default function SecretaryDashboard({ user, onLogout }) {
                         </h1>
                         <p className="text-indigo-300 text-sm mt-1">Prepare agendas, record minutes, and track portfolio.</p>
                     </div>
-                    <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto">
-                        {renderTabButton('review', 'Table Motions', <FileText size={16}/>)}
-                        {renderTabButton('meetings', 'Live Voting', <BarChart3 size={16}/>)}
-                        {renderTabButton('portfolio', 'Master Loan List', <List size={16}/>)}
+                    <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto gap-2">
+                        {renderTabButton('review', 'Motions', <FileText size={16}/>)}
+                        {renderTabButton('meetings', 'Voting', <BarChart3 size={16}/>)}
+                        {renderTabButton('portfolio', 'Loans', <List size={16}/>)}
+                        {/* New Buttons */}
+                        {renderTabButton('assets', 'Assets', <Landmark size={16}/>)}
+                        {renderTabButton('expenses', 'Expenses', <Receipt size={16}/>)}
                     </div>
                 </div>
 
@@ -262,7 +315,7 @@ export default function SecretaryDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 3. ACTIVE PORTFOLIO (NEW) */}
+                {/* 3. ACTIVE PORTFOLIO */}
                 {activeTab === 'portfolio' && (
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
@@ -283,7 +336,8 @@ export default function SecretaryDashboard({ user, onLogout }) {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {portfolio.map(loan => (
+                                    {portfolio.length === 0 ? <tr><td colSpan="5" className="p-8 text-center text-slate-400">No active loans found.</td></tr> :
+                                    portfolio.map(loan => (
                                         <tr key={loan.id} className="hover:bg-slate-50">
                                             <td className="px-6 py-4 font-medium text-slate-900">{loan.full_name}</td>
                                             <td className="px-6 py-4 text-xs text-slate-500">
@@ -296,9 +350,124 @@ export default function SecretaryDashboard({ user, onLogout }) {
                                             </td>
                                         </tr>
                                     ))}
-                                    {portfolio.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* 4. ASSETS TAB (NEW) */}
+                {activeTab === 'assets' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
+                        <div className="md:col-span-1 bg-white p-6 rounded-2xl shadow-sm h-fit border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Landmark size={20} className="text-indigo-600"/> Register Fixed Asset</h3>
+                            <form onSubmit={handleAddAsset} className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Asset Name</label>
+                                    <input type="text" placeholder="e.g. Juja Plot LR/2023" className="w-full border p-2 rounded-lg text-sm" value={newAsset.name} onChange={e=>setNewAsset({...newAsset, name: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Type</label>
+                                    <select className="w-full border p-2 rounded-lg text-sm bg-slate-50" value={newAsset.type} onChange={e=>setNewAsset({...newAsset, type: e.target.value})}>
+                                        <option value="LAND">Land</option>
+                                        <option value="BUILDING">Building</option>
+                                        <option value="VEHICLE">Vehicle</option>
+                                        <option value="EQUIPMENT">Equipment</option>
+                                        <option value="INVESTMENT">Investment</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Current Valuation (KES)</label>
+                                    <input type="number" className="w-full border p-2 rounded-lg text-sm" value={newAsset.value} onChange={e=>setNewAsset({...newAsset, value: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Location / Serial No</label>
+                                    <input type="text" className="w-full border p-2 rounded-lg text-sm" value={newAsset.location} onChange={e=>setNewAsset({...newAsset, location: e.target.value})} />
+                                </div>
+                                <button disabled={loading} className="w-full bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700 transition">
+                                    {loading ? 'Saving...' : '+ Add Asset'}
+                                </button>
+                            </form>
+                        </div>
+                        <div className="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 text-slate-800">Asset Register</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                        <tr><th className="p-3">Asset Name</th><th className="p-3">Type</th><th className="p-3">Valuation</th><th className="p-3">Date Added</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {assets.length === 0 ? <tr><td colSpan="4" className="p-4 text-center text-slate-400">No assets recorded.</td></tr> : 
+                                        assets.map(a => (
+                                            <tr key={a.id} className="hover:bg-slate-50">
+                                                <td className="p-3 font-bold text-slate-700">{a.name}<br/><span className="text-xs font-normal text-slate-400">{a.location}</span></td>
+                                                <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{a.type}</span></td>
+                                                <td className="p-3 text-emerald-600 font-bold">KES {parseFloat(a.value).toLocaleString()}</td>
+                                                <td className="p-3 text-xs text-slate-500">{new Date(a.created_at).toLocaleDateString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 5. EXPENSES TAB (NEW) */}
+                {activeTab === 'expenses' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
+                        <div className="md:col-span-1 bg-white p-6 rounded-2xl shadow-sm h-fit border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Receipt size={20} className="text-rose-600"/> Record Expense</h3>
+                            <form onSubmit={handleAddExpense} className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Expense Title</label>
+                                    <input type="text" placeholder="e.g. Office Rent - March" className="w-full border p-2 rounded-lg text-sm" value={newExpense.title} onChange={e=>setNewExpense({...newExpense, title: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Category</label>
+                                    <select className="w-full border p-2 rounded-lg text-sm bg-slate-50" value={newExpense.category} onChange={e=>setNewExpense({...newExpense, category: e.target.value})}>
+                                        <option value="GENERAL">General</option>
+                                        <option value="RENT">Rent</option>
+                                        <option value="UTILITIES">Utilities</option>
+                                        <option value="TRANSPORT">Transport</option>
+                                        <option value="SALARY">Salary/Allowances</option>
+                                        <option value="MARKETING">Marketing</option>
+                                        <option value="REPAIRS">Repairs</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Amount (KES)</label>
+                                    <input type="number" className="w-full border p-2 rounded-lg text-sm" value={newExpense.amount} onChange={e=>setNewExpense({...newExpense, amount: e.target.value})} required/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-slate-500 uppercase">Description / Notes</label>
+                                    <textarea className="w-full border p-2 rounded-lg text-sm" rows="2" value={newExpense.description} onChange={e=>setNewExpense({...newExpense, description: e.target.value})} />
+                                </div>
+                                <button disabled={loading} className="w-full bg-rose-600 text-white py-2 rounded-lg font-bold hover:bg-rose-700 transition">
+                                    {loading ? 'Saving...' : 'Record Expense'}
+                                </button>
+                            </form>
+                        </div>
+                        <div className="md:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 text-slate-800">Operational Expenses History</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                        <tr><th className="p-3">Title</th><th className="p-3">Category</th><th className="p-3">Amount</th><th className="p-3">Date</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {expenses.length === 0 ? <tr><td colSpan="4" className="p-4 text-center text-slate-400">No expenses recorded.</td></tr> : 
+                                        expenses.map(ex => (
+                                            <tr key={ex.id} className="hover:bg-slate-50">
+                                                <td className="p-3 font-bold text-slate-700">{ex.title}</td>
+                                                <td className="p-3"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{ex.category}</span></td>
+                                                <td className="p-3 text-rose-600 font-bold">KES {parseFloat(ex.amount).toLocaleString()}</td>
+                                                <td className="p-3 text-xs text-slate-500">{new Date(ex.expense_date).toLocaleDateString()}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 )}
