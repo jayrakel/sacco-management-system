@@ -131,10 +131,11 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleDownloadStatement = async () => {
     try {
       showNotify("success", "Generating PDF...");
-      const response = await api.get('/reports/statement/me', {
-        responseType: 'blob', // Important for file downloads
+      // FIX: Added '/api' prefix to match your server routes
+      const response = await api.get('/api/reports/statement/me', { 
+        responseType: 'blob', 
       });
-      // Create a temporary link to download
+      
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
