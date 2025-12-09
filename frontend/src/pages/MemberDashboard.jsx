@@ -3,7 +3,7 @@ import api from "../api";
 import {
   CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus,
   Search, UserCheck, UserX, Inbox, Vote, ThumbsUp, ThumbsDown, Printer, FileText, Smartphone, Landmark, Globe,
-  ShieldCheck, Download // Added Download Icon
+  ShieldCheck, Download, Loader // Added Loader Icon
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -11,6 +11,7 @@ import DashboardHeader from "../components/DashboardHeader";
 export default function MemberDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false); // New state for PDF download
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [savings, setSavings] = useState({ balance: 0, history: [] });
@@ -112,14 +113,12 @@ export default function MemberDashboard({ user, onLogout }) {
   const addGuarantor = async (guarantorId) => { try { await api.post("/api/loan/guarantors/add", { loanId: loanState.id, guarantorId }); setRefreshKey(o=>o+1); setSearchResults([]); setSearchQuery(""); showNotify("success", "Request Sent!"); } catch (err) { showNotify("error", err.response?.data?.error || "Failed"); } };
   const handleFinalSubmit = async () => { try { await api.post("/api/loan/final-submit", { loanAppId: loanState.id }); setRefreshKey(o=>o+1); showNotify("success", "Application Submitted!"); } catch (e) { showNotify("error", "Failed"); } };
   
-  // --- UPDATED: Show backend error message for Guarantor Risk ---
   const handleGuarantorResponse = async (requestId, decision) => { 
     try { 
       await api.post("/api/loan/guarantors/respond", { requestId, decision }); 
       setRefreshKey(k=>k+1); 
       showNotify(decision === "ACCEPTED" ? "success" : "error", `Request ${decision}`); 
     } catch (err) { 
-      // IMPORTANT: Now we display the exact error from the backend (e.g. Financial Risk)
       showNotify("error", err.response?.data?.error || "Action Failed"); 
     } 
   };
@@ -127,25 +126,23 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleVote = async (loanId, decision) => { try { await api.post("/api/loan/vote", { loanId, decision }); setRefreshKey(k=>k+1); showNotify("success", "Vote Cast!"); } catch (err) { showNotify("error", err.response?.data?.error || "Voting Failed"); } };
   const handlePrint = () => { window.print(); };
 
-  // --- NEW: PDF Statement Download Handler ---
+  // --- UPDATED: PDF Statement Download Handler ---
   const handleDownloadStatement = async () => {
+    if (downloading) return;
+    setDownloading(true);
     try {
       showNotify("success", "Generating PDF...");
       
-      // 1. Request the PDF
       const response = await api.get('/api/reports/statement/me', {
         responseType: 'blob',
       });
 
-      // 2. Generate Custom Filename: "John_Doe_Statement_2023-10-25_14-30.pdf"
       const safeName = user.name ? user.name.replace(/[^a-zA-Z0-9]/g, '_') : 'Member';
       const now = new Date();
-      // Format: YYYY-MM-DD_HH-MM
       const dateStr = now.toISOString().split('T')[0];
       const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
       const fileName = `${safeName}_Statement_${dateStr}_${timeStr}.pdf`;
 
-      // 3. Trigger Download
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -157,6 +154,8 @@ export default function MemberDashboard({ user, onLogout }) {
     } catch (err) {
       console.error(err);
       showNotify("error", "Failed to generate statement.");
+    } finally {
+        setDownloading(false);
     }
   };
   
@@ -313,7 +312,7 @@ export default function MemberDashboard({ user, onLogout }) {
                 {loanState.status === "LOADING" && <div className="p-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-100 border-dashed">Loading...</div>}
                 {loanState.status === "NO_APP" && (<div className="bg-blue-600 rounded-2xl p-8 text-white shadow-lg flex flex-col sm:flex-row items-center justify-between gap-6"><div><h4 className="text-2xl font-bold">Apply for Loan</h4><p>Get up to <span className="font-bold text-yellow-300">{multiplier}x</span> savings.</p></div><button onClick={handleLoanStart} className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold">Start Application</button></div>)}
                 
-                {/* Loan Application Steps (Guarantors, Verified, Tabled, etc) */}
+                {/* Loan Application Steps */}
                 {loanState.status === "FEE_PENDING" && <div className="bg-white p-8 rounded-2xl shadow-sm border border-orange-100"><h3 className="text-xl font-bold text-orange-800 mb-2">Step 1: Application Fee</h3><p className="text-slate-500 mb-4">Please pay the non-refundable processing fee of <b>KES {loanState.fee_amount || 500}</b>.</p><button onClick={handleLoanFeePayment} className="bg-orange-500 text-white px-6 py-3 rounded-xl font-bold">Pay via M-Pesa</button></div>}
                 {loanState.status === "FEE_PAID" && <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200"><h3 className="text-xl font-bold mb-4">Step 2: Loan Details</h3><form onSubmit={handleLoanSubmit} className="space-y-4"><input type="number" required placeholder="Amount (KES)" className="w-full border p-3 rounded-xl" value={loanForm.amount} onChange={(e) => setLoanForm({ ...loanForm, amount: e.target.value })} /><input type="text" required placeholder="Purpose (e.g. School Fees)" className="w-full border p-3 rounded-xl" value={loanForm.purpose} onChange={(e) => setLoanForm({ ...loanForm, purpose: e.target.value })} /><input type="number" required placeholder="Repayment Period (Weeks)" className="w-full border p-3 rounded-xl" value={loanForm.repaymentWeeks} onChange={(e) => setLoanForm({ ...loanForm, repaymentWeeks: e.target.value })} /><button className="bg-slate-800 text-white px-6 py-3 rounded-xl font-bold w-full">Next: Guarantors</button></form></div>}
                 {loanState.status === "PENDING_GUARANTORS" && <div className="bg-white p-8 rounded-2xl shadow-sm border border-blue-100"><h3 className="text-xl font-bold mb-2">Step 3: Guarantors</h3><p className="text-slate-500 mb-4">Search and add at least 2 active members.</p><div className="flex gap-2 mb-4"><input type="text" placeholder="Search by name..." className="flex-1 border p-3 rounded-xl" value={searchQuery} onChange={handleSearch} /></div>{searchResults.length > 0 && <div className="bg-slate-50 p-2 rounded-xl mb-4 space-y-2">{searchResults.map(u => <div key={u.id} className="flex justify-between items-center p-2 bg-white rounded border"><span>{u.full_name}</span><button onClick={() => addGuarantor(u.id)} className="text-blue-600 font-bold text-sm"><UserPlus size={18} /></button></div>)}</div>}<div className="space-y-2 mb-6">{guarantors.map(g => <div key={g.id} className="flex justify-between p-3 bg-slate-50 rounded-xl"><span>{g.full_name}</span><span className={`text-xs font-bold px-2 py-1 rounded ${g.status === 'ACCEPTED' ? 'bg-green-100 text-green-700' : 'bg-gray-200'}`}>{g.status}</span></div>)}</div><button onClick={handleFinalSubmit} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold">Submit Application</button></div>}
@@ -353,7 +352,14 @@ export default function MemberDashboard({ user, onLogout }) {
                   
                   {/* ACTIONS: PRINT AND DOWNLOAD */}
                   <div className="flex gap-2 print:hidden">
-                    <button onClick={handleDownloadStatement} className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:bg-slate-100 px-4 py-2 rounded-lg transition border border-slate-200"><Download size={16}/> PDF</button>
+                    <button 
+                        onClick={handleDownloadStatement} 
+                        disabled={downloading}
+                        className={`flex items-center gap-2 text-sm font-bold text-slate-700 hover:bg-slate-100 px-4 py-2 rounded-lg transition border border-slate-200 ${downloading ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                        {downloading ? <Loader size={16} className="animate-spin"/> : <Download size={16}/>}
+                        {downloading ? "Generating..." : "PDF"}
+                    </button>
                     <button onClick={handlePrint} className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-lg transition"><Printer size={16}/> Print</button>
                   </div>
               </div>

@@ -70,7 +70,7 @@ async function drawHeader(doc, title, user, details, serialNo) {
 }
 
 // ============================================================================
-// ROUTE 1: MEMBER STATEMENT (Existing - Preserved)
+// ROUTE 1: MEMBER STATEMENT (With Totals)
 // ============================================================================
 router.get('/statement/me', authenticateUser, async (req, res) => {
     try {
@@ -97,7 +97,7 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
 
         await drawHeader(doc, 'Account Statement', user, sacco, serialNo);
 
-        // Member Table Logic (Simplified for brevity as it was provided before)
+        // Member Table Logic
         let y = doc.y + 20;
         doc.rect(50, y - 5, 500, 20).fill('#f0f0f0').stroke();
         doc.fillColor('#333').font('Helvetica-Bold').fontSize(9);
@@ -106,14 +106,24 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
         y += 25;
         doc.font('Helvetica').fontSize(8);
         let runningBalance = 0;
+        let totalCredit = 0;
+        let totalDebit = 0;
 
         transactions.forEach((tx, i) => {
             if (y > 720) { doc.addPage(); y = 50; }
             const amt = parseFloat(tx.amount);
             let moneyIn = 0, moneyOut = 0;
             const IN_TYPES = ['DEPOSIT', 'LOAN_DISBURSEMENT', 'DIVIDEND'];
-            if (IN_TYPES.includes(tx.type)) { moneyIn = amt; runningBalance += amt; } 
-            else { moneyOut = amt; runningBalance -= amt; }
+            
+            if (IN_TYPES.includes(tx.type)) { 
+                moneyIn = amt; 
+                totalCredit += amt;
+                runningBalance += amt; 
+            } else { 
+                moneyOut = amt; 
+                totalDebit += amt;
+                runningBalance -= amt; 
+            }
 
             if (i % 2 === 0) doc.rect(50, y - 2, 500, 20).fillColor('#fbfbfb').fill();
             doc.fillColor('#000');
@@ -129,22 +139,49 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
             y += 22;
         });
 
+        // --- STATEMENT SUMMARY FOOTER ---
+        if (y > 650) { doc.addPage(); y = 50; } // Ensure space for summary
+        y += 10;
+        
+        doc.moveTo(50, y).lineTo(550, y).strokeColor('#333').stroke();
+        y += 10;
+
+        // Draw Summary Box
+        doc.rect(300, y, 250, 65).fillColor('#f8fafc').fillAndStroke('#e2e8f0');
+        doc.fillColor('#1e293b');
+        
+        let sumY = y + 10;
+        doc.font('Helvetica-Bold').fontSize(9);
+        
+        doc.text('TOTAL CREDITS (In):', 310, sumY);
+        doc.fillColor('#047857').text(`KES ${totalCredit.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
+        
+        sumY += 15;
+        doc.fillColor('#1e293b').text('TOTAL DEBITS (Out):', 310, sumY);
+        doc.fillColor('#b91c1c').text(`KES ${totalDebit.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
+        
+        sumY += 20;
+        doc.moveTo(310, sumY - 5).lineTo(540, sumY - 5).strokeColor('#cbd5e1').stroke();
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#0f172a');
+        doc.text('CLOSING BALANCE:', 310, sumY);
+        doc.text(`KES ${runningBalance.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
+
         doc.end();
     } catch (err) { console.error(err); res.status(500).json({ error: "PDF Error" }); }
 });
 
 // ============================================================================
-// ROUTE 2: CHAIRPERSON EXECUTIVE REPORT (Updated with Ledger)
+// ROUTE 2: CHAIRPERSON FULL FINANCIAL LEDGER
 // ============================================================================
 router.get('/summary/download', authenticateUser, async (req, res) => {
     try {
         if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
 
-        const serialNo = `EXEC-${Date.now().toString().slice(-6)}`;
+        const serialNo = `LEDGER-${Date.now().toString().slice(-6)}`;
         const sacco = await getSaccoDetails();
         const now = new Date();
 
-        // 1. Fetch High Level Stats
+        // 1. Fetch High Level Stats (Fast Queries)
         const savingsRes = await db.query("SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'COMPLETED' AND type = 'DEPOSIT'");
         const netSavings = parseFloat(savingsRes.rows[0].total);
         
@@ -155,28 +192,29 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         const loanStats = loansRes.rows[0];
         const outstanding = parseFloat(loanStats.total_due) - parseFloat(loanStats.repaid);
 
-        const liquidityRes = await db.query(`SELECT COALESCE(SUM(CASE WHEN type IN ('DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'PENALTY', 'REGISTRATION_FEE') THEN amount ELSE 0 END), 0) as inflow, COALESCE(SUM(CASE WHEN type IN ('LOAN_DISBURSEMENT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as outflow FROM transactions`);
+        const liquidityRes = await db.query(`SELECT COALESCE(SUM(CASE WHEN type IN ('DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'PENALTY', 'REGISTRATION_FEE', 'FEE_PAYMENT') THEN amount ELSE 0 END), 0) as inflow, COALESCE(SUM(CASE WHEN type IN ('LOAN_DISBURSEMENT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as outflow FROM transactions`);
         const cashOnHand = parseFloat(liquidityRes.rows[0].inflow) - parseFloat(liquidityRes.rows[0].outflow);
 
-        // 2. Fetch Recent Transactions (The Ledger)
+        // 2. Fetch FULL Transaction History (Removed LIMIT 50)
+        // Note: For production with >10k rows, this should be paginated or streamed via cursor. 
+        // For this version 0.0.7, standard query is acceptable.
         const recentTx = await db.query(`
             SELECT t.*, u.full_name 
             FROM transactions t 
             JOIN users u ON t.user_id = u.id 
-            ORDER BY t.created_at DESC LIMIT 50
+            ORDER BY t.created_at DESC
         `);
 
         // --- PDF GENERATION ---
-        // Filename: Sacco_Executive_Report_2023-10-25_14-30.pdf
         const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const filename = `${sacco.name.replace(/ /g,'_')}_Executive_Report_${timestamp}.pdf`;
+        const filename = `${sacco.name.replace(/ /g,'_')}_Master_Ledger_${timestamp}.pdf`;
 
         const doc = new PDFDocument({ margin: 50, size: 'A4' });
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
         doc.pipe(res);
 
-        await drawHeader(doc, 'Executive Financial Report', req.user, sacco, serialNo);
+        await drawHeader(doc, 'Master Financial Ledger', req.user, sacco, serialNo);
 
         // --- SECTION 1: FINANCIAL HEALTH (Summary) ---
         let y = doc.y + 10;
@@ -197,7 +235,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         y += 70;
 
         // --- SECTION 2: SYSTEM LEDGER (Money In/Out) ---
-        doc.font('Helvetica-Bold').fontSize(12).fillColor('#1e293b').text('2. RECENT SYSTEM TRANSACTIONS (Audit Trail)', 50, y);
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#1e293b').text('2. FULL SYSTEM LEDGER (Audit Trail)', 50, y);
         doc.moveTo(50, y + 15).lineTo(350, y + 15).stroke();
         
         y += 30;
@@ -213,6 +251,10 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         y += 25;
         doc.font('Helvetica');
 
+        // Track totals for the ledger
+        let totalLedgerIn = 0;
+        let totalLedgerOut = 0;
+
         recentTx.rows.forEach((tx, i) => {
             if (y > 720) { doc.addPage(); y = 50; }
 
@@ -220,10 +262,15 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
             let moneyIn = 0, moneyOut = 0;
             // Logic for Sacco perspective: 
             // Deposit = Money IN to Sacco. Loan Disbursement = Money OUT from Sacco.
-            const IN_TYPES = ['DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'REGISTRATION_FEE', 'FEE_PAYMENT'];
+            const IN_TYPES = ['DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'REGISTRATION_FEE', 'FEE_PAYMENT', 'PENALTY', 'LOAN_FORM_FEE'];
             
-            if (IN_TYPES.includes(tx.type)) moneyIn = amt;
-            else moneyOut = amt;
+            if (IN_TYPES.includes(tx.type)) { 
+                moneyIn = amt;
+                totalLedgerIn += amt;
+            } else { 
+                moneyOut = amt;
+                totalLedgerOut += amt;
+            }
 
             // Zebra Striping
             if (i % 2 === 0) doc.rect(50, y - 2, 500, 20).fillColor('#f8fafc').fill();
@@ -251,6 +298,21 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
             y += 25;
         });
 
+        // --- LEDGER TOTALS ---
+        if (y > 650) { doc.addPage(); y = 50; }
+        y += 10;
+        doc.rect(300, y, 250, 50).fillColor('#f1f5f9').fillAndStroke('#cbd5e1');
+        doc.fillColor('#0f172a');
+        let sumY = y + 10;
+        doc.font('Helvetica-Bold').fontSize(10);
+        
+        doc.text('TOTAL INFLOW:', 310, sumY);
+        doc.fillColor('#16a34a').text(`KES ${totalLedgerIn.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
+        
+        sumY += 15;
+        doc.fillColor('#0f172a').text('TOTAL OUTFLOW:', 310, sumY);
+        doc.fillColor('#dc2626').text(`KES ${totalLedgerOut.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
+
         // --- FOOTER ---
         const bottomY = 730;
         doc.fontSize(8).fillColor('#94a3b8');
@@ -265,9 +327,8 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
     }
 });
 
-// ROUTE 3: JSON SUMMARY (Keep existing logic for the Dashboard Cards)
+// ROUTE 3: JSON SUMMARY (Keep existing logic for Dashboard)
 router.get('/summary', authenticateUser, async (req, res) => {
-    // ... (Keep the JSON logic from previous steps so dashboard charts still load)
     try {
         if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
 

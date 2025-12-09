@@ -5,7 +5,7 @@ import {
     Gavel, TrendingUp, Users, Settings, UserPlus, Save, 
     DollarSign, FileText, CheckCircle, AlertCircle, 
     FileWarning, PlusCircle, Calculator, ShieldAlert,
-    Printer, PieChart // Imported Icons
+    Printer, PieChart, Loader // Imported Icons
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -37,10 +37,11 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
     
-    // --- NEW: Report & Branding Data State ---
+    // Report Data State
     const [reportData, setReportData] = useState(null);
     const [logo, setLogo] = useState(null);
     const [saccoName, setSaccoName] = useState('Sacco');
+    const [downloading, setDownloading] = useState(false); // NEW Loading state for PDF
     
     // Dynamic Policy State
     const [currentRegFee, setCurrentRegFee] = useState(1500);
@@ -106,7 +107,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     setDeposits(resDeposits.data || []);
                     setTransactions(resTrans.data || []);
                 } else if (activeTab === 'reports') {
-                    // --- NEW: Fetch Report Data ---
                     const resRep = await api.get('/api/reports/summary');
                     setReportData(resRep.data);
                 }
@@ -228,17 +228,21 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const handlePrintReport = () => {
         window.print();
     };
+    
+    // --- UPDATED: PDF Report Download with Loading State ---
     const handleDownloadReport = async () => {
+        if (downloading) return;
+        setDownloading(true);
         try {
             const response = await api.get('/api/reports/summary/download', {
                 responseType: 'blob', 
             });
             
-            // Generate filename: "Sacco_Name_Executive_Report_2023-12-09_10-30.pdf"
+            // Generate filename: "Sacco_Name_Master_Ledger_2023-12-09_10-30.pdf"
             const safeSaccoName = saccoName.replace(/ /g, '_');
             const now = new Date();
-            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19); // "2023-12-09T10-30-00"
-            const fileName = `${safeSaccoName}_Executive_Report_${timestamp}.pdf`;
+            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19); 
+            const fileName = `${safeSaccoName}_Master_Ledger_${timestamp}.pdf`;
 
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
@@ -250,6 +254,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) {
             console.error(err);
             alert("Failed to download report.");
+        } finally {
+            setDownloading(false);
         }
     };
 
@@ -320,7 +326,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                         <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto max-w-full">
                             {renderTabButton('voting', 'Voting', <Gavel size={16}/>)}
                             {renderTabButton('finance', 'Finance', <TrendingUp size={16}/>)}
-                            {renderTabButton('reports', 'Reports', <PieChart size={16}/>)} {/* NEW BUTTON */}
+                            {renderTabButton('reports', 'Reports', <PieChart size={16}/>)}
                             {renderTabButton('members', 'Directory', <Users size={16}/>)}
                             {renderTabButton('settings', 'Policies', <Settings size={16}/>)}
                             {renderTabButton('register', 'Add Member', <UserPlus size={16}/>)}
@@ -653,6 +659,18 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                             <div className="mt-2 text-slate-700">
                                 <span className="text-2xl font-bold">{reportData.membership_count}</span> Active Members registered in the system.
                             </div>
+                        </div>
+
+                        {/* NEW: Download Full Ledger Button */}
+                        <div className="mt-8 flex justify-center print:hidden">
+                            <button 
+                                onClick={handleDownloadReport} 
+                                disabled={downloading}
+                                className={`w-full max-w-sm bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-3 shadow-lg transition ${downloading ? 'opacity-75 cursor-not-allowed' : ''}`}
+                            >
+                                {downloading ? <Loader size={20} className="animate-spin"/> : <FileText size={20}/>}
+                                {downloading ? "Generating Master Ledger..." : "Download Full Master Ledger (PDF)"}
+                            </button>
                         </div>
                     </div>
                 )}
