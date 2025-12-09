@@ -3,7 +3,7 @@ import api from "../api";
 import {
   CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus,
   Search, Inbox, Vote, ThumbsUp, Printer, FileText, Smartphone, Landmark, Globe,
-  ShieldCheck, Download, Loader, Send
+  ShieldCheck, Download, Loader, Send, User, Settings, Lock, Save
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -30,6 +30,13 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const [loanForm, setLoanForm] = useState({ amount: "", purpose: "", repaymentWeeks: "" });
   
+  // Profile State
+  const [profile, setProfile] = useState({
+    full_name: "", email: "", phone_number: "", id_number: "", kra_pin: "",
+    next_of_kin_name: "", next_of_kin_phone: "", next_of_kin_relation: ""
+  });
+  const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
+
   // Deposit State
   const [depositMethod, setDepositMethod] = useState('MPESA'); 
   const [mpesaMode, setMpesaMode] = useState('STK'); 
@@ -100,6 +107,15 @@ export default function MemberDashboard({ user, onLogout }) {
     fetchData();
   }, [user, refreshKey, navigate]);
 
+  // Fetch Profile Data on Tab Switch
+  useEffect(() => {
+    if (activeTab === 'profile') {
+        api.get('/api/auth/profile')
+           .then(res => setProfile(res.data))
+           .catch(err => showNotify("error", "Failed to load profile"));
+    }
+  }, [activeTab]);
+
   const showNotify = (type, msg) => { setToast({ type, msg }); setTimeout(() => setToast(null), 5000); };
 
   // --- HANDLERS ---
@@ -156,6 +172,37 @@ export default function MemberDashboard({ user, onLogout }) {
   const handlePrint = () => { window.print(); };
   const handleDownloadStatement = async () => { if (downloading) return; setDownloading(true); try { showNotify("success", "Generating PDF..."); const response = await api.get('/api/reports/statement/me', { responseType: 'blob' }); const safeName = user.name ? user.name.replace(/[^a-zA-Z0-9]/g, '_') : 'Member'; const now = new Date(); const fileName = `${safeName}_Statement_${now.toISOString().split('T')[0]}.pdf`; const url = window.URL.createObjectURL(new Blob([response.data])); const link = document.createElement('a'); link.href = url; link.setAttribute('download', fileName); document.body.appendChild(link); link.click(); link.remove(); } catch (err) { console.error(err); showNotify("error", "Failed to generate statement."); } finally { setDownloading(false); } };
   
+  // Profile Handlers
+  const handleProfileUpdate = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+        await api.put('/api/auth/profile', profile);
+        showNotify("success", "Profile Updated!");
+    } catch (err) {
+        showNotify("error", err.response?.data?.error || "Update Failed");
+    }
+    setLoading(false);
+  };
+
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+        showNotify("error", "Passwords do not match"); return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+        showNotify("error", "Password too short"); return;
+    }
+    setLoading(true);
+    try {
+        await api.post('/api/auth/change-password', { newPassword: passwordForm.newPassword });
+        showNotify("success", "Password Changed Successfully!");
+        setPasswordForm({ newPassword: "", confirmPassword: "" });
+    } catch (err) {
+        showNotify("error", err.response?.data?.error || "Failed");
+    }
+    setLoading(false);
+  };
+
   const bankChannels = paymentChannels.filter(c => c.type === 'BANK');
   const paypalChannels = paymentChannels.filter(c => c.type === 'PAYPAL');
   const mpesaChannels = paymentChannels.filter(c => c.type === 'MPESA');
@@ -169,7 +216,18 @@ export default function MemberDashboard({ user, onLogout }) {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 print:mt-0 print:max-w-none">
         
-        {/* TOP STATS */}
+        {/* Navigation Tabs */}
+        <div className="flex gap-4 mb-6 print:hidden overflow-x-auto pb-2">
+            <button onClick={() => setActiveTab("dashboard")} className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition ${activeTab === 'dashboard' ? 'bg-indigo-900 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-slate-100'}`}>
+                <TrendingUp size={18}/> Overview
+            </button>
+            <button onClick={() => setActiveTab("profile")} className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition ${activeTab === 'profile' ? 'bg-indigo-900 text-white shadow-lg' : 'bg-white text-slate-600 hover:bg-slate-100'}`}>
+                <Settings size={18}/> Settings & Profile
+            </button>
+        </div>
+
+        {/* TOP STATS (Only show on Dashboard) */}
+        {activeTab === 'dashboard' && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 print:hidden">
           <div className="bg-slate-900 rounded-2xl p-8 text-white shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10"><PiggyBank size={120} /></div>
@@ -189,6 +247,75 @@ export default function MemberDashboard({ user, onLogout }) {
           </div>
           <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full"><div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider"><Inbox size={16} /> Actions</div><div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar max-h-[150px]">{incomingRequests.length === 0 && votingQueue.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs italic">No pending actions.</div> : <>{incomingRequests.map(req => <div key={req.id} className="p-2 bg-blue-50 rounded border border-blue-100 text-xs flex justify-between items-center"><span><b>{req.applicant_name}</b> needs guarantor</span><button onClick={() => handleGuarantorResponse(req.id, "ACCEPTED")} className="bg-blue-600 text-white px-2 py-0.5 rounded font-bold">Accept</button></div>)}{votingQueue.map(vote => <div key={vote.id} className="p-2 bg-purple-50 rounded border border-purple-100 text-xs flex justify-between items-center"><span>Vote: <b>{vote.full_name}</b></span><button onClick={() => handleVote(vote.id, "YES")} className="bg-purple-600 text-white px-2 py-0.5 rounded font-bold">Yes</button></div>)}</>}</div></div>
         </div>
+        )}
+
+        {/* --- PROFILE TAB --- */}
+        {activeTab === "profile" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 print:hidden animate-fade-in">
+                {/* Personal Details Form */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-full"><User size={24}/></div>
+                        <h2 className="text-xl font-bold text-slate-800">Personal Information</h2>
+                    </div>
+                    
+                    <form onSubmit={handleProfileUpdate} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label><input type="text" className="w-full border p-3 rounded-xl bg-slate-50" value={profile.full_name || ''} onChange={(e) => setProfile({...profile, full_name: e.target.value})} required /></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="tel" className="w-full border p-3 rounded-xl bg-slate-50" value={profile.phone_number || ''} onChange={(e) => setProfile({...profile, phone_number: e.target.value})} required /></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Email</label><input type="email" disabled className="w-full border p-3 rounded-xl bg-slate-100 text-slate-500 cursor-not-allowed" value={profile.email || ''} /></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">ID Number</label><input type="text" disabled className="w-full border p-3 rounded-xl bg-slate-100 text-slate-500 cursor-not-allowed" value={profile.id_number || ''} /></div>
+                        </div>
+                        
+                        <div className="pt-4 border-t border-slate-100 mt-4">
+                            <h3 className="text-sm font-bold text-slate-700 mb-3">Next of Kin Details</h3>
+                            <div className="space-y-4">
+                                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Name</label><input type="text" className="w-full border p-3 rounded-xl" value={profile.next_of_kin_name || ''} onChange={(e) => setProfile({...profile, next_of_kin_name: e.target.value})} /></div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Phone</label><input type="tel" className="w-full border p-3 rounded-xl" value={profile.next_of_kin_phone || ''} onChange={(e) => setProfile({...profile, next_of_kin_phone: e.target.value})} /></div>
+                                    <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Relation</label><input type="text" className="w-full border p-3 rounded-xl" value={profile.next_of_kin_relation || ''} onChange={(e) => setProfile({...profile, next_of_kin_relation: e.target.value})} /></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 mt-4 transition">
+                            {loading ? <Loader className="animate-spin" size={18}/> : <Save size={18}/>} Save Changes
+                        </button>
+                    </form>
+                </div>
+
+                {/* Security Settings */}
+                <div className="space-y-6">
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="p-3 bg-red-50 text-red-600 rounded-full"><Lock size={24}/></div>
+                            <h2 className="text-xl font-bold text-slate-800">Security</h2>
+                        </div>
+                        <form onSubmit={handlePasswordChange} className="space-y-4">
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase mb-1">New Password</label>
+                                <input type="password" required minLength={6} className="w-full border p-3 rounded-xl" value={passwordForm.newPassword} onChange={(e) => setPasswordForm({...passwordForm, newPassword: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase mb-1">Confirm Password</label>
+                                <input type="password" required minLength={6} className="w-full border p-3 rounded-xl" value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm({...passwordForm, confirmPassword: e.target.value})} />
+                            </div>
+                            <button disabled={loading} className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition">
+                                <Settings size={18}/> Update Password
+                            </button>
+                        </form>
+                    </div>
+
+                    <div className="bg-slate-100 rounded-2xl p-6 border border-slate-200 text-slate-500 text-sm">
+                        <p className="flex items-center gap-2 mb-2 font-bold"><ShieldCheck size={16}/> Account Status</p>
+                        <p>Your account is <span className="text-green-600 font-bold uppercase">{profile.is_active ? "Active" : "Inactive"}</span>.</p>
+                        <p className="mt-1">Member since {new Date(profile.created_at).toLocaleDateString()}.</p>
+                    </div>
+                </div>
+            </div>
+        )}
 
         {/* --- DEPOSIT TAB --- */}
         {activeTab === "deposit" && (

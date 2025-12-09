@@ -208,7 +208,60 @@ router.post('/logout', (req, res) => {
     res.json({ message: "Logged out" });
 });
 
-// GET ALL USERS
+// --- NEW: PROFILE MANAGEMENT ROUTES ---
+
+// GET CURRENT USER PROFILE
+router.get('/profile', authenticateUser, async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT id, full_name, email, phone_number, role, 
+            id_number, kra_pin, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, 
+            created_at, is_active 
+            FROM users WHERE id = $1`,
+            [req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: "User not found" });
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error("Profile fetch error:", err);
+        res.status(500).json({ error: "Failed to fetch profile" });
+    }
+});
+
+// UPDATE CURRENT USER PROFILE
+router.put('/profile', authenticateUser, async (req, res) => {
+    const { full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation } = req.body;
+    
+    try {
+        // Validation (Basic)
+        if (!full_name || !phone_number) {
+            return res.status(400).json({ error: "Name and Phone Number are required." });
+        }
+
+        await db.query(
+            `UPDATE users SET 
+                full_name = COALESCE($1, full_name),
+                phone_number = COALESCE($2, phone_number),
+                next_of_kin_name = COALESCE($3, next_of_kin_name),
+                next_of_kin_phone = COALESCE($4, next_of_kin_phone),
+                next_of_kin_relation = COALESCE($5, next_of_kin_relation)
+            WHERE id = $6`,
+            [full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, req.user.id]
+        );
+        
+        res.json({ message: "Profile updated successfully" });
+    } catch (err) {
+        console.error("Profile update error:", err);
+        if (err.code === '23505') { // Postgres Unique Violation
+            return res.status(400).json({ error: "Phone number already in use by another member." });
+        }
+        res.status(500).json({ error: "Update failed" });
+    }
+});
+
+// --------------------------------------
+
+// GET ALL USERS (Admin/Officials only)
 router.get('/users', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'SECRETARY', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
