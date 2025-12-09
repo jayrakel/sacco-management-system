@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer'); // --- NEW: Import Nodemailer
+const nodemailer = require('nodemailer'); 
 const db = require('../../db');
 const { authenticateUser } = require('./middleware');
 const { validate, registerSchema } = require('../common/validation');
@@ -12,7 +12,7 @@ const { validate, registerSchema } = require('../common/validation');
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT,
-    secure: true, // Use SSL
+    secure: true, 
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
@@ -125,9 +125,10 @@ router.post('/login', async (req, res) => {
 
         const user = result.rows[0];
         
-        // --- CHECK VERIFICATION ---
+        // --- FIX: USE 400 INSTEAD OF 403 FOR UNVERIFIED USERS ---
+        // This prevents the frontend interceptor from redirecting to /unauthorized
         if (!user.is_email_verified) {
-            return res.status(403).json({ error: "Please verify your email first. Check your inbox." });
+            return res.status(400).json({ error: "Please verify your email first. Check your inbox." });
         }
 
         if (!user.is_active) return res.status(403).json({ error: "Account deactivated. Contact Admin." });
@@ -166,7 +167,6 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// ... (Keep logout, users, setup-status, change-password, etc.) ...
 // LOGOUT
 router.post('/logout', (req, res) => {
     res.clearCookie('token');

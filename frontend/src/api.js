@@ -2,7 +2,6 @@ import axios from 'axios';
 
 // Create the Axios instance
 const api = axios.create({
-  // Use Vite environment variable for URL, fallback to localhost
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000', 
   withCredentials: true, 
 });
@@ -14,40 +13,44 @@ api.interceptors.response.use(
   },
   (error) => {
     if (error.response) {
-      const { status } = error.response;
+      const { status, config } = error.response;
 
       // 1. Unauthorized (401) - Session expired or invalid login
       if (status === 401) {
+        // Don't redirect if we are already on the login page trying to login
+        if (config.url.includes('/login')) {
+            return Promise.reject(error);
+        }
         console.warn("Session expired. Redirecting to login...");
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
+        localStorage.removeItem('sacco_user'); // Correct key
         window.location.href = '/'; 
       }
 
       // 2. Forbidden (403) - Role mismatch or access denied
       if (status === 403) {
+        // FIX: Don't redirect to unauthorized if it's a login attempt error
+        if (config.url.includes('/login')) {
+            return Promise.reject(error);
+        }
         console.warn("Access denied.");
         window.location.href = '/unauthorized';
       }
 
-      // 3. Not Found (404) - API endpoint missing (rare in production)
+      // 3. Not Found (404)
       if (status === 404) {
         console.warn("Resource not found.");
-        // Optional: redirect to /not-found if critical data is missing
       }
 
-      // 4. Server Error (500) - Backend crash
+      // 4. Server Error (500)
       if (status >= 500) {
         console.error("Server error detected.");
-        // We only redirect to the error page for GET requests to avoid disrupting forms
-        if (error.config.method === 'get') {
-            window.location.href = '/server-error';
+        if (config.method === 'get') {
+            // Only redirect full page loads, not background API calls
+            // window.location.href = '/server-error'; 
         }
       }
     } else if (error.request) {
-      // Network Error (Server down / No internet)
       console.error("Network error - server might be down");
-      // Optional: window.location.href = '/server-error';
     }
 
     return Promise.reject(error);
