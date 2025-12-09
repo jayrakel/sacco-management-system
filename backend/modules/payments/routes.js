@@ -8,13 +8,128 @@ const Joi = require('joi');
 const axios = require('axios');
 
 // Validation for Manual Recording (Admin)
+// Removed strict .valid() list to allow dynamic custom categories
 const recordTransactionSchema = Joi.object({
     userId: Joi.number().required(),
-    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT', 'SHARE_CAPITAL', 'LOAN_FORM_FEE', 'FEE_PAYMENT').required(),
+    type: Joi.string().required(), // Changed to allow dynamic strings
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
     reference: Joi.string().optional().allow('', null) 
 });
+
+// ==========================================
+//  HELPER: DEPOSIT ROUTING SYSTEM
+//  Flow: Incoming -> General Savings -> Target Account
+// ==========================================
+const processCompletedTransaction = async (client, transaction) => {
+    const { id, user_id, type, amount, reference_code } = transaction;
+    console.log(`[Router] Processing: ${type} for User ${user_id} - KES ${amount}`);
+
+    // STEP 1: ALWAYS CREDIT GENERAL DEPOSIT ACCOUNT FIRST
+    const depositRef = `DEP-${reference_code}`;
+    await client.query(
+        `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+         VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', $4)
+         ON CONFLICT (transaction_ref) DO NOTHING`, 
+        [user_id, amount, depositRef, `Incoming Funds: ${type}`]
+    );
+
+    // If purpose is purely Savings (DEPOSIT), stop here.
+    if (type === 'DEPOSIT') {
+        console.log(`[Router] Funds retained in General Savings.`);
+        return;
+    }
+
+    // STEP 2: DEDUCT FROM GENERAL ACCOUNT (ROUTING)
+    const transferRef = `TRF-${reference_code}`;
+    await client.query(
+        `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+         VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', $4)`,
+        [user_id, -amount, transferRef, `Transfer to: ${type.replace(/_/g, ' ')}`]
+    );
+
+    // STEP 3: CREDIT TARGET ACCOUNT (Logic Branch)
+    console.log(`[Router] Routing funds to ${type}...`);
+
+    if (type === 'SHARE_CAPITAL') {
+        await client.query(
+            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+             VALUES ($1, $2, 'SHARE_CAPITAL', $3, 'COMPLETED', 'Purchase of Shares')`,
+            [user_id, amount, reference_code]
+        );
+    } 
+    else if (type === 'LOAN_REPAYMENT') {
+        const loanRes = await client.query(
+            "SELECT id, amount_repaid, total_due, amount_requested FROM loan_applications WHERE user_id = $1 AND status = 'ACTIVE' ORDER BY created_at ASC LIMIT 1",
+            [user_id]
+        );
+        if (loanRes.rows.length > 0) {
+            const loan = loanRes.rows[0];
+            const newPaid = parseFloat(loan.amount_repaid) + parseFloat(amount);
+            const total = parseFloat(loan.total_due || loan.amount_requested);
+            let newStatus = 'ACTIVE';
+            if (newPaid >= total - 5) newStatus = 'COMPLETED';
+
+            await client.query(
+                "UPDATE loan_applications SET amount_repaid = $1, status = $2, updated_at = NOW() WHERE id = $3",
+                [newPaid, newStatus, loan.id]
+            );
+            console.log(`[Router] Loan #${loan.id} repayment processed.`);
+        } else {
+            console.log("[Router] No active loan found. Refunding to Savings.");
+            await client.query(
+                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Active Loan Found')`,
+                [user_id, amount, `RFD-${reference_code}`]
+            );
+        }
+    }
+    else if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
+        const loanRes = await client.query(
+            "SELECT id FROM loan_applications WHERE user_id = $1 AND status = 'FEE_PENDING' ORDER BY created_at DESC LIMIT 1",
+            [user_id]
+        );
+        if (loanRes.rows.length > 0) {
+            await client.query(
+                "UPDATE loan_applications SET status = 'FEE_PAID', fee_transaction_ref = $1, fee_amount = $2 WHERE id = $3",
+                [reference_code, amount, loanRes.rows[0].id]
+            );
+        } else {
+             await client.query(
+                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Pending Fee Found')`,
+                [user_id, amount, `RFD-${reference_code}`]
+            );
+        }
+    }
+    else if (type === 'PENALTY' || type === 'FINE') {
+        console.log("[Router] Penalty payment absorbed.");
+    }
+    else {
+        // --- DYNAMIC CATEGORY HANDLER ---
+        // Check if this type exists in our custom categories table
+        const catCheck = await client.query("SELECT name, description FROM contribution_categories WHERE name = $1 AND is_active = TRUE", [type]);
+        
+        if (catCheck.rows.length > 0) {
+            const category = catCheck.rows[0];
+            // Credit the custom bucket (stored in deposits with the custom TYPE)
+            await client.query(
+                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+                 VALUES ($1, $2, $3, $4, 'COMPLETED', $5)`,
+                [user_id, amount, type, reference_code, `Contribution: ${category.description}`]
+            );
+            console.log(`[Router] Routed to Custom Category: ${category.name}`);
+        } else {
+            console.warn(`[Router] Unknown type ${type}. Refunding to General Savings.`);
+            // Refund the debit we just made in Step 2
+             await client.query(
+                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: Unknown Category')`,
+                [user_id, amount, `RFD-${reference_code}`]
+            );
+        }
+    }
+};
 
 // ==========================================
 //  MPESA UTILITIES
@@ -53,11 +168,10 @@ const generatePassword = () => {
 };
 
 // ==========================================
-//  1. EXTERNAL WEBHOOK (THE "REAL" LISTENER)
+//  1. EXTERNAL WEBHOOK
 // ==========================================
 router.post('/webhook/receive', async (req, res) => {
     const { reference, amount, method, sender } = req.body;
-
     if (!reference || !amount) return res.status(400).json({ error: "Missing data" });
 
     try {
@@ -70,65 +184,48 @@ router.post('/webhook/receive', async (req, res) => {
             [amount, reference, `Incoming from ${method || 'External'} (${sender || 'Unknown'})`]
         );
 
-        console.log(`[Webhook] Received ${amount} with Ref ${reference}. Marked as UNCLAIMED.`);
         res.json({ success: true, message: "Transaction received" });
-
     } catch (err) {
-        console.error("Webhook Error:", err);
         res.status(500).json({ error: "Server Error" });
     }
 });
 
 // ==========================================
-//  2. MEMBER CLAIMING (DIRECT PAYBILL)
+//  2. MEMBER CLAIMING (ROUTING TRIGGER)
 // ==========================================
 router.post('/mpesa/manual', authenticateUser, async (req, res) => {
-    const { reference } = req.body;
-    
+    const { reference, purpose } = req.body; 
     if (!reference) return res.status(400).json({ error: "Reference Code is required." });
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
 
-        const check = await client.query(
-            "SELECT id, amount, status FROM transactions WHERE reference_code = $1", 
-            [reference]
-        );
-
+        const check = await client.query("SELECT * FROM transactions WHERE reference_code = $1", [reference]);
         if (check.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: "Transaction not found. Please wait for the bank to process it or check the code." });
+            return res.status(404).json({ error: "Transaction not found." });
         }
 
         const tx = check.rows[0];
-
         if (tx.status === 'COMPLETED') {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: "This code has already been used." });
-        }
-        
-        if (tx.status !== 'UNCLAIMED') {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: `Cannot claim transaction. Current status: ${tx.status}` });
+            return res.status(400).json({ error: "Already claimed." });
         }
 
-        await client.query(
-            "UPDATE transactions SET user_id = $1, status = 'COMPLETED', description = $2 WHERE id = $3",
-            [req.user.id, `Direct Deposit Claimed: ${reference}`, tx.id]
-        );
+        // Apply selected purpose or default
+        const finalType = purpose || tx.type || 'DEPOSIT';
 
         await client.query(
-            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-             VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
-            [req.user.id, tx.amount, reference]
+            "UPDATE transactions SET user_id = $1, status = 'COMPLETED', type = $2, description = $3 WHERE id = $4",
+            [req.user.id, finalType, `Manual Claim: ${reference}`, tx.id]
         );
+
+        // RUN ROUTING LOGIC
+        await processCompletedTransaction(client, { ...tx, user_id: req.user.id, type: finalType });
 
         await client.query('COMMIT');
-        res.json({ 
-            success: true, 
-            message: `Success! KES ${parseFloat(tx.amount).toLocaleString()} added to your savings.` 
-        });
+        res.json({ success: true, message: `Payment claimed and routed.` });
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -148,14 +245,10 @@ router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res)
     
     if (!formattedPhone.startsWith('254')) return res.status(400).json({ error: "Invalid Phone. Use 254..." });
 
-    // RESTORED: No longer blocking localhost!
     const callbackUrl = process.env.MPESA_CALLBACK_URL || 'http://localhost:5000/api/payments/mpesa/callback';
-    
     const { password, timestamp } = generatePassword();
 
     try {
-        console.log(`[STK Push] Initiating... Phone: ${formattedPhone}, Amount: ${amount}, URL: ${callbackUrl}`);
-
         const stkRes = await axios.post(
             'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
             {
@@ -168,7 +261,7 @@ router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res)
                 PartyB: process.env.MPESA_SHORTCODE,
                 PhoneNumber: formattedPhone,
                 CallBackURL: callbackUrl,
-                AccountReference: "SecureSacco",
+                AccountReference: "SaccoPayment",
                 TransactionDesc: (type || "Payment").substring(0, 13) 
             },
             { headers: { Authorization: `Bearer ${req.mpesaToken}` } }
@@ -180,55 +273,35 @@ router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res)
         await db.query(
             `INSERT INTO transactions 
             (user_id, type, amount, status, reference_code, checkout_request_id, merchant_request_id, description) 
-            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, 'M-Pesa STK Push Initiated')`,
-            [req.user.id, type || 'DEPOSIT', amount, `PENDING-${checkoutReqId}`, checkoutReqId, merchantReqId]
+            VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7)`,
+            [req.user.id, type || 'DEPOSIT', amount, `PENDING-${checkoutReqId}`, checkoutReqId, merchantReqId, `M-Pesa STK: ${type}`]
         );
 
-        res.json({ success: true, message: "STK Push sent to phone", checkoutReqId });
+        res.json({ success: true, message: "STK Push sent.", checkoutReqId });
 
     } catch (err) {
-        const errorData = err.response?.data || {};
-        console.error("STK Push Failed Details:", errorData);
-        
-        let msg = "STK Push Failed.";
-        
-        // Even if Safaricom complains about the URL (500.001.1001), we can sometimes ignore it
-        // BUT usually, 500.001.1001 means they REJECTED the request entirely.
-        // If it worked before, your callback URL was likely valid format (http://...) even if unreachable.
-        
-        if (errorData.errorMessage) msg += ` ${errorData.errorMessage}`;
-        res.status(500).json({ error: msg, details: errorData });
+        res.status(500).json({ error: "STK Push Failed", details: err.response?.data });
     }
 });
 
 // ==========================================
-//  4. MPESA CALLBACK (Manual Trigger Compatible)
+//  4. MPESA CALLBACK
 // ==========================================
 router.post('/mpesa/callback', async (req, res) => {
-    console.log("--- M-Pesa Callback Received ---");
     try {
-        // Safe access to body
         const { Body } = req.body || {};
-        if (!Body || !Body.stkCallback) {
-            console.log("Invalid Body or Verification Ping. Responding 200 OK.");
-            return res.sendStatus(200);
-        }
+        if (!Body || !Body.stkCallback) return res.sendStatus(200);
 
         const { stkCallback } = Body;
         const checkoutReqId = stkCallback.CheckoutRequestID;
         const resultCode = stkCallback.ResultCode; 
 
-        console.log(`Callback ID: ${checkoutReqId} | Result: ${resultCode}`);
-
         const txCheck = await db.query("SELECT * FROM transactions WHERE checkout_request_id = $1", [checkoutReqId]);
-        if (txCheck.rows.length === 0) {
-            console.log("Transaction not found locally.");
-            return res.sendStatus(200);
-        }
+        if (txCheck.rows.length === 0) return res.sendStatus(200);
+        
         const transaction = txCheck.rows[0];
 
         if (resultCode === 0) {
-            // Success
             const items = stkCallback.CallbackMetadata?.Item || [];
             const mpesaReceipt = items.find(i => i.Name === 'MpesaReceiptNumber')?.Value || `MPESA-${Date.now()}`;
 
@@ -236,22 +309,14 @@ router.post('/mpesa/callback', async (req, res) => {
             try {
                 await client.query('BEGIN');
                 await client.query(
-                    "UPDATE transactions SET status = 'COMPLETED', reference_code = $1, description = 'STK Confirmed' WHERE id = $2",
-                    [mpesaReceipt, transaction.id]
+                    "UPDATE transactions SET status = 'COMPLETED', reference_code = $1, description = $2 WHERE id = $3",
+                    [mpesaReceipt, `STK Confirmed: ${transaction.type}`, transaction.id]
                 );
                 
-                // Only credit if it hasn't been credited yet
-                const depCheck = await client.query("SELECT id FROM deposits WHERE transaction_ref = $1", [mpesaReceipt]);
-                if (depCheck.rows.length === 0 && transaction.type === 'DEPOSIT') {
-                    await client.query(
-                        `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-                         VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
-                        [transaction.user_id, transaction.amount, mpesaReceipt]
-                    );
-                }
+                // EXECUTE ROUTING LOGIC
+                await processCompletedTransaction(client, { ...transaction, reference_code: mpesaReceipt });
                 
                 await client.query('COMMIT');
-                console.log(`Transaction ${mpesaReceipt} confirmed.`);
             } catch (sqlErr) {
                 await client.query('ROLLBACK');
                 console.error("Callback SQL Error", sqlErr);
@@ -259,139 +324,102 @@ router.post('/mpesa/callback', async (req, res) => {
                 client.release();
             }
         } else {
-            // Failed/Cancelled
             await db.query("UPDATE transactions SET status = 'FAILED', description = $1 WHERE id = $2", [stkCallback.ResultDesc || 'User Cancelled', transaction.id]);
-            console.log(`Transaction ${transaction.id} failed.`);
         }
         res.sendStatus(200);
     } catch (err) {
-        console.error("Callback Error:", err);
         res.sendStatus(200);
     }
 });
 
 // ==========================================
-//  5. BANK DEPOSIT (MANUAL REVIEW)
+//  5. BANK & PAYPAL DEPOSITS (With Purpose)
 // ==========================================
 router.post('/bank/deposit', authenticateUser, async (req, res) => {
-    const { amount, reference, bankName } = req.body;
+    const { amount, reference, bankName, type } = req.body;
     if (!amount || !reference) return res.status(400).json({ error: "Details required" });
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
-
-        const refCheck = await client.query("SELECT id FROM transactions WHERE reference_code = $1", [reference]);
-        if (refCheck.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: "Reference Code already used." });
-        }
-
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, status, reference_code, description) 
-             VALUES ($1, 'DEPOSIT', $2, 'PENDING', $3, $4)`,
-            [req.user.id, amount, reference, `Bank: ${bankName}`]
+             VALUES ($1, $2, $3, 'PENDING', $4, $5)`,
+            [req.user.id, type || 'DEPOSIT', amount, reference, `Bank: ${bankName}`]
         );
-
-        await client.query(
-            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-             VALUES ($1, $2, 'DEPOSIT', $3, 'PENDING')`,
-            [req.user.id, amount, reference]
-        );
-
         await client.query('COMMIT');
-        res.json({ success: true, message: "Bank deposit recorded. Waiting for Treasurer approval." });
-
+        res.json({ success: true, message: "Recorded. Waiting for Treasurer approval." });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error("Bank Deposit Error:", err);
-        res.status(500).json({ error: "Failed to record bank deposit." });
+        if(err.code === '23505') return res.status(400).json({error: "Ref Code used"});
+        res.status(500).json({ error: "Failed to record." });
     } finally {
         client.release();
     }
 });
 
-// ==========================================
-//  6. PAYPAL DEPOSIT (MANUAL REVIEW)
-// ==========================================
 router.post('/paypal/deposit', authenticateUser, async (req, res) => {
-    const { amount, reference } = req.body;
+    const { amount, reference, type } = req.body;
     if (!amount || !reference) return res.status(400).json({ error: "Details required" });
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
-
-        const refCheck = await client.query("SELECT id FROM transactions WHERE reference_code = $1", [reference]);
-        if (refCheck.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: "Transaction ID already used." });
-        }
-
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, status, reference_code, description) 
-             VALUES ($1, 'DEPOSIT', $2, 'PENDING', $3, 'PayPal Transfer')`,
-            [req.user.id, amount, reference]
+             VALUES ($1, $2, $3, 'PENDING', $4, 'PayPal Transfer')`,
+            [req.user.id, type || 'DEPOSIT', amount, reference]
         );
-
-        await client.query(
-            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-             VALUES ($1, $2, 'DEPOSIT', $3, 'PENDING')`,
-            [req.user.id, amount, reference]
-        );
-
         await client.query('COMMIT');
-        res.json({ success: true, message: "PayPal deposit recorded. Waiting for Treasurer approval." });
-
+        res.json({ success: true, message: "Recorded. Waiting for Treasurer approval." });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error("PayPal Deposit Error:", err);
-        res.status(500).json({ error: "Failed to record PayPal deposit." });
+        if(err.code === '23505') return res.status(400).json({error: "Ref Code used"});
+        res.status(500).json({ error: "Failed to record." });
     } finally {
         client.release();
     }
 });
 
 // ==========================================
-//  7. TREASURER VERIFICATION
+//  6. ADMIN REVIEW (Executes Routing)
 // ==========================================
 router.get('/admin/deposits/pending', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
     try {
         const result = await db.query(
-            `SELECT d.id, d.amount, d.transaction_ref, d.type, d.created_at, u.full_name, t.description 
-             FROM deposits d
-             JOIN users u ON d.user_id = u.id
-             LEFT JOIN transactions t ON d.transaction_ref = t.reference_code
-             WHERE d.status = 'PENDING'
-             ORDER BY d.created_at ASC`
+            `SELECT t.id, t.amount, t.reference_code, t.type, t.created_at, u.full_name, t.description 
+             FROM transactions t
+             JOIN users u ON t.user_id = u.id
+             WHERE t.status = 'PENDING'
+             ORDER BY t.created_at ASC`
         );
         res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: "Fetch failed" });
-    }
+    } catch (err) { res.status(500).json({ error: "Fetch failed" }); }
 });
 
 router.post('/admin/deposits/review', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
     
-    const { depositId, decision } = req.body; 
+    const { transactionId, decision } = req.body; 
     if (!['COMPLETED', 'REJECTED'].includes(decision)) return res.status(400).json({ error: "Invalid decision" });
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
+        const txRes = await client.query("SELECT * FROM transactions WHERE id = $1", [transactionId]);
+        if (txRes.rows.length === 0) throw new Error("Transaction not found");
+        const tx = txRes.rows[0];
 
-        const depRes = await client.query("SELECT transaction_ref FROM deposits WHERE id = $1", [depositId]);
-        if (depRes.rows.length === 0) throw new Error("Deposit not found");
-        const ref = depRes.rows[0].transaction_ref;
+        await client.query("UPDATE transactions SET status = $1 WHERE id = $2", [decision, transactionId]);
 
-        await client.query("UPDATE deposits SET status = $1 WHERE id = $2", [decision, depositId]);
-        await client.query("UPDATE transactions SET status = $1 WHERE reference_code = $2", [decision, ref]);
+        // IF APPROVED, RUN ROUTING
+        if (decision === 'COMPLETED') {
+            await processCompletedTransaction(client, tx);
+        }
 
         await client.query('COMMIT');
-        res.json({ success: true, message: `Deposit ${decision}` });
-
+        res.json({ success: true, message: `Transaction ${decision}` });
     } catch (err) {
         await client.query('ROLLBACK');
         res.status(500).json({ error: "Action failed" });
@@ -400,276 +428,41 @@ router.post('/admin/deposits/review', authenticateUser, async (req, res) => {
     }
 });
 
-// ==========================================
-//  8. STANDARD PAYMENT ROUTES
-// ==========================================
-router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
-    const { loanAppId, mpesaRef } = req.body;
-    const client = await db.pool.connect();
+// Legacy routes
+router.post('/pay-fee', authenticateUser, async (req, res) => { res.status(400).json({error: "Use Deposit route with 'Fee' purpose"}); });
+router.post('/repay-loan', authenticateUser, async (req, res) => { res.status(400).json({error: "Use Deposit route with 'Repayment' purpose"}); });
 
-    try {
-        await client.query('BEGIN');
-        
-        const loanCheck = await client.query("SELECT user_id FROM loan_applications WHERE id=$1", [loanAppId]);
-        if (loanCheck.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
-        if (loanCheck.rows[0].user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized payment" });
-
-        const feeVal = await getSetting('loan_processing_fee');
-        const feeAmount = parseFloat(feeVal) || 500;
-
-        await client.query(
-            `INSERT INTO transactions (user_id, type, amount, reference_code) 
-             VALUES ($1, 'LOAN_FORM_FEE', $2, $3)`,
-            [req.user.id, feeAmount, mpesaRef]
-        );
-
-        await client.query(
-            `UPDATE loan_applications 
-             SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
-             WHERE id=$3`,
-            [mpesaRef, feeAmount, loanAppId]
-        );
-
-        await client.query('COMMIT');
-        res.json({ success: true, message: `Fee of KES ${feeAmount} paid.` });
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(err);
-        if (err.code === '23505') return res.status(400).json({ error: "Reference used." });
-        res.status(500).json({ error: "Payment Failed" });
-    } finally {
-        client.release();
-    }
-});
-
-router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
-    const { loanAppId, amount, mpesaRef } = req.body;
-    const client = await db.pool.connect();
-
-    try {
-        await client.query('BEGIN');
-        const loanRes = await client.query(
-            `SELECT user_id, amount_requested, amount_repaid, status, total_due 
-             FROM loan_applications WHERE id=$1`, 
-            [loanAppId]
-        );
-
-        if (loanRes.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
-        const loan = loanRes.rows[0];
-
-        if (loan.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
-        if (loan.status !== 'ACTIVE') return res.status(400).json({ error: "Loan not active" });
-
-        const targetAmount = parseFloat(loan.total_due || loan.amount_requested);
-        const currentPaid = parseFloat(loan.amount_repaid || 0);
-        const repaymentAmt = parseFloat(amount);
-        const newPaid = currentPaid + repaymentAmt;
-
-        await client.query(
-            `INSERT INTO transactions (user_id, type, amount, reference_code) 
-             VALUES ($1, 'LOAN_REPAYMENT', $2, $3)`,
-            [req.user.id, repaymentAmt, mpesaRef]
-        );
-
-        let newStatus = 'ACTIVE';
-        if (newPaid >= targetAmount - 1) {
-            newStatus = 'COMPLETED';
-        }
-
-        await client.query(
-            `UPDATE loan_applications 
-             SET amount_repaid = $1, status = $2, updated_at = NOW()
-             WHERE id = $3`,
-            [newPaid, newStatus, loanAppId]
-        );
-
-        await client.query('COMMIT');
-        res.json({ 
-            success: true, 
-            message: newStatus === 'COMPLETED' ? "Loan fully repaid!" : "Repayment received.",
-            balance: Math.max(0, targetAmount - newPaid)
-        });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(err);
-        if (err.code === '23505') return res.status(400).json({ error: "Reference code used." });
-        res.status(500).json({ error: "Repayment Failed" });
-    } finally {
-        client.release();
-    }
-});
-
+// Admin Manual Record (Updated for dynamic types)
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
-    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
-        return res.status(403).json({ error: "Access Denied" });
-    }
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
 
     let { userId, type, amount, reference, description } = req.body;
-    
-    if (!reference || reference.trim() === '') {
-        reference = `AUTO-${type}-${Date.now().toString().slice(-8)}-${Math.floor(Math.random() * 1000)}`;
-    }
+    if (!reference || reference.trim() === '') reference = `AUTO-${Date.now()}`;
 
     const client = await db.pool.connect();
-
     try {
         await client.query('BEGIN');
-
         const result = await client.query(
-            `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            `INSERT INTO transactions (user_id, type, amount, reference_code, description, status) 
+             VALUES ($1, $2, $3, $4, $5, 'COMPLETED') RETURNING *`,
             [userId, type, amount, reference, description]
         );
-
-        if (type === 'DEPOSIT' || type === 'SHARE_CAPITAL') {
-            await client.query(
-                `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-                 VALUES ($1, $2, $3, $4, 'COMPLETED')`,
-                [userId, amount, type, reference] 
-            );
-        } 
-        else if (type === 'FINE' || type === 'PENALTY') {
-            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1 AND type='DEPOSIT'", [userId]);
-            const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
-
-            if (currentSavings > 0) {
-                const deductionAmount = -Math.abs(amount); 
-                const deductRef = `DEDUCT-${reference}`;
-                
-                await client.query(
-                    `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-                     VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`, 
-                    [userId, deductionAmount, deductRef]
-                );
-            }
-        }
-
-        if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
-            const recentLoan = await client.query(
-                `SELECT id FROM loan_applications 
-                 WHERE user_id = $1 AND status = 'FEE_PENDING' 
-                 ORDER BY created_at DESC LIMIT 1`,
-                [userId]
-            );
-
-            if (recentLoan.rows.length > 0) {
-                const loanId = recentLoan.rows[0].id;
-                await client.query(
-                    `UPDATE loan_applications 
-                     SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2
-                     WHERE id=$3`,
-                    [reference, amount, loanId]
-                );
-            }
-        }
+        
+        await processCompletedTransaction(client, result.rows[0]);
 
         await client.query('COMMIT');
         res.json({ success: true, transaction: result.rows[0] });
     } catch (err) {
         await client.query('ROLLBACK');
-        console.error(err);
-        if (err.code === '23505') return res.status(400).json({ error: "Reference code already exists" });
-        res.status(500).json({ error: "Failed to record transaction" });
-    } finally {
-        client.release();
-    }
+        res.status(500).json({ error: "Failed to record" });
+    } finally { client.release(); }
 });
 
-router.post('/admin/run-weekly-compliance', authenticateUser, async (req, res) => {
-    if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
-
-    const client = await db.pool.connect();
+router.get('/admin/all', authenticateUser, async (req, res) => {
     try {
-        await client.query('BEGIN');
-
-        const minDepositVal = await getSetting('min_weekly_deposit');
-        const penaltyVal = await getSetting('penalty_missed_savings');
-        const minDeposit = parseFloat(minDepositVal) || 250;
-        const penaltyAmount = parseFloat(penaltyVal) || 50;
-
-        const complianceQuery = `
-            SELECT u.id 
-            FROM users u
-            WHERE u.role = 'MEMBER'
-            AND u.id NOT IN (
-                SELECT user_id FROM transactions 
-                WHERE type = 'DEPOSIT' 
-                AND created_at >= date_trunc('week', CURRENT_DATE)
-                GROUP BY user_id
-                HAVING SUM(amount) >= $1
-            )
-            AND u.id NOT IN (
-                SELECT user_id FROM transactions 
-                WHERE type = 'FINE' 
-                AND description LIKE 'Missed Weekly Deposit%'
-                AND created_at >= date_trunc('week', CURRENT_DATE)
-            )
-        `;
-
-        const nonCompliant = await client.query(complianceQuery, [minDeposit]);
-        
-        if (nonCompliant.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.json({ message: "Compliance Check Complete. Everyone is up to date!", count: 0 });
-        }
-
-        const weekStr = new Date().toLocaleDateString('en-GB', { week: 'numeric', year: 'numeric' });
-        let deductedCount = 0;
-
-        for (const user of nonCompliant.rows) {
-            const ref = `AUTO-FINE-${user.id}-${Date.now().toString().slice(-6)}`;
-            
-            await client.query(
-                `INSERT INTO transactions (user_id, type, amount, reference_code, description) 
-                 VALUES ($1, 'FINE', $2, $3, $4)`,
-                [user.id, penaltyAmount, ref, `Missed Weekly Deposit (Week ${weekStr})`]
-            );
-
-            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1", [user.id]);
-            const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
-
-            if (currentSavings > 0) {
-                await client.query(
-                    `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-                     VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
-                    [user.id, -penaltyAmount, `DEDUCT-${ref}`]
-                );
-                deductedCount++;
-            }
-        }
-
-        await client.query('COMMIT');
-        res.json({ 
-            success: true, 
-            message: `Compliance Check: Fined ${nonCompliant.rows.length} members. Deducted from ${deductedCount} accounts.`, 
-            count: nonCompliant.rows.length 
-        });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error("Compliance Error", err);
-        res.status(500).json({ error: "Compliance check failed" });
-    } finally {
-        client.release();
-    }
-});
-
-router.get('/admin/all', authenticateUser, (req, res, next) => {
-    if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next();
-    else res.status(403).json({ error: "Access Denied" });
-}, async (req, res) => {
-    try {
-        const result = await db.query(
-            `SELECT t.*, u.full_name 
-             FROM transactions t 
-             JOIN users u ON t.user_id = u.id 
-             ORDER BY t.created_at DESC`
-        );
+        const result = await db.query(`SELECT t.*, u.full_name FROM transactions t JOIN users u ON t.user_id = u.id ORDER BY t.created_at DESC`);
         res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: "Could not fetch transactions" });
-    }
+    } catch (err) { res.status(500).json({ error: "Error" }); }
 });
 
 module.exports = router;

@@ -6,7 +6,6 @@ const { authenticateUser } = require('../auth/middleware');
 // --- NEW: Public Branding Route (No Auth Required) ---
 router.get('/branding', async (req, res) => {
     try {
-        // Updated to fetch sacco_name as well
         const result = await db.query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('sacco_logo', 'sacco_favicon', 'sacco_name')");
         res.json(result.rows);
     } catch (err) {
@@ -18,7 +17,6 @@ router.get('/branding', async (req, res) => {
 // GET ALL SETTINGS (Authenticated)
 router.get('/', authenticateUser, async (req, res) => {
     try {
-        // Now fetching 'category' column as well
         const result = await db.query("SELECT * FROM system_settings ORDER BY category, setting_key ASC");
         res.json(result.rows); 
     } catch (err) {
@@ -31,16 +29,13 @@ router.post('/update', authenticateUser, async (req, res) => {
     const { key, value } = req.body;
     
     try {
-        // 1. Fetch the setting to check its category
         const check = await db.query("SELECT category FROM system_settings WHERE setting_key = $1", [key]);
         if (check.rows.length === 0) return res.status(404).json({ error: "Setting not found" });
 
         const category = check.rows[0].category;
         const role = req.user.role;
 
-        // 2. Enforce Separation of Duties
         let authorized = false;
-
         if (role === 'ADMIN' && category === 'SYSTEM') authorized = true;
         if (role === 'CHAIRPERSON' && category === 'SACCO') authorized = true;
 
@@ -50,13 +45,57 @@ router.post('/update', authenticateUser, async (req, res) => {
             });
         }
 
-        // 3. Update
         await db.query("UPDATE system_settings SET setting_value = $1 WHERE setting_key = $2", [value, key]);
         res.json({ success: true });
 
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Update failed" });
+    }
+});
+
+// --- NEW: Custom Contribution Categories ---
+
+// Get Categories (For Dropdowns)
+router.get('/categories', authenticateUser, async (req, res) => {
+    try {
+        const result = await db.query("SELECT * FROM contribution_categories WHERE is_active = TRUE ORDER BY name ASC");
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch categories" });
+    }
+});
+
+// Create Category (Chairperson/Treasurer)
+router.post('/categories', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+    
+    const { name, description } = req.body;
+    try {
+        // Uppercase, underscore format for consistency (e.g., "Buying Plot" -> "BUYING_PLOT")
+        // But for display friendly, we can keep original name or just store standard uppercase code
+        const code = name.toUpperCase().replace(/\s+/g, '_');
+        
+        await db.query(
+            "INSERT INTO contribution_categories (name, description) VALUES ($1, $2)",
+            [code, description || name]
+        );
+        res.json({ success: true, message: "Category created" });
+    } catch (err) {
+        if(err.code === '23505') return res.status(400).json({ error: "Category already exists" });
+        res.status(500).json({ error: "Creation failed" });
+    }
+});
+
+// Delete Category
+router.delete('/categories/:id', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+    
+    try {
+        await db.query("UPDATE contribution_categories SET is_active = FALSE WHERE id = $1", [req.params.id]);
+        res.json({ success: true, message: "Category removed" });
+    } catch (err) {
+        res.status(500).json({ error: "Delete failed" });
     }
 });
 

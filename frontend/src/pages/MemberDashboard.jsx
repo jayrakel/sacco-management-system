@@ -3,7 +3,7 @@ import api from "../api";
 import {
   CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus,
   Search, Inbox, Vote, ThumbsUp, Printer, FileText, Smartphone, Landmark, Globe,
-  ShieldCheck, Download, Loader, Send, User, Settings, Lock, Save, Camera
+  ShieldCheck, Download, Loader, Send, User, Settings, Lock, Save, Camera, Coins, Layers
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -21,6 +21,7 @@ export default function MemberDashboard({ user, onLogout }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [incomingRequests, setIncomingRequests] = useState([]);
+  const [customCategories, setCustomCategories] = useState([]); // NEW: Store custom categories
   
   const [weeklyStats, setWeeklyStats] = useState({ total: 0, goal: 250, isComplete: false });
 
@@ -41,6 +42,7 @@ export default function MemberDashboard({ user, onLogout }) {
   // Deposit State
   const [depositMethod, setDepositMethod] = useState('MPESA'); 
   const [mpesaMode, setMpesaMode] = useState('STK'); 
+  const [depositPurpose, setDepositPurpose] = useState('DEPOSIT'); 
   const [depositForm, setDepositForm] = useState({ amount: "", phoneNumber: "", reference: "" });
   const [bankForm, setBankForm] = useState({ amount: "", reference: "", bankName: "" });
   const [paypalForm, setPaypalForm] = useState({ amount: "", reference: "" }); 
@@ -53,18 +55,20 @@ export default function MemberDashboard({ user, onLogout }) {
     if (!user) { navigate("/"); return; }
     const fetchData = async () => {
       try {
-        const [balanceRes, historyRes, loanRes, reqRes, voteRes, settingsRes] = await Promise.all([
+        const [balanceRes, historyRes, loanRes, reqRes, voteRes, settingsRes, catRes] = await Promise.all([
             api.get("/api/deposits/balance"),
             api.get("/api/deposits/history"), 
             api.get("/api/loan/status"),
             api.get("/api/loan/guarantors/requests"),
             api.get("/api/loan/vote/open"),
             api.get("/api/settings"),
+            api.get("/api/settings/categories"), // Fetch Categories
         ]);
 
         setSavings({ balance: balanceRes.data.balance, history: historyRes.data });
         setIncomingRequests(reqRes.data);
         setVotingQueue(voteRes.data);
+        setCustomCategories(catRes.data); // Store categories
 
         // Settings
         let minWeekly = 250;
@@ -124,16 +128,22 @@ export default function MemberDashboard({ user, onLogout }) {
       e.preventDefault(); setLoading(true); 
       try { 
           if(mpesaMode === 'STK') {
-              const res = await api.post("/api/payments/mpesa/stk-push", { amount: depositForm.amount, phoneNumber: depositForm.phoneNumber, type: 'DEPOSIT' }); 
-              if (res.data.success) { alert(`STK Push Sent! Enter PIN on phone.`); }
+              const res = await api.post("/api/payments/mpesa/stk-push", { 
+                  amount: depositForm.amount, 
+                  phoneNumber: depositForm.phoneNumber, 
+                  type: depositPurpose 
+              }); 
+              if (res.data.success) { alert(`STK Push Sent! Enter PIN to confirm ${depositPurpose}.`); }
           } else {
-              // MANUAL CLAIM LOGIC
-              const res = await api.post("/api/payments/mpesa/manual", { reference: depositForm.reference });
+              const res = await api.post("/api/payments/mpesa/manual", { 
+                  reference: depositForm.reference,
+                  purpose: depositPurpose
+              });
               if (res.data.success) { 
                   showNotify("success", res.data.message); 
                   setActiveTab("dashboard"); 
                   setRefreshKey(k=>k+1); 
-                  return; // Stop here, don't just clear form
+                  return; 
               }
           }
           setDepositForm({ amount: "", phoneNumber: "", reference: "" }); setActiveTab("dashboard");
@@ -144,7 +154,7 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleBankDeposit = async (e) => { 
       e.preventDefault(); setLoading(true); 
       try { 
-          const res = await api.post('/api/payments/bank/deposit', bankForm); 
+          const res = await api.post('/api/payments/bank/deposit', { ...bankForm, type: depositPurpose }); 
           alert(res.data.message); 
           setBankForm({ amount: '', reference: '', bankName: '' }); setActiveTab('dashboard'); setRefreshKey(k => k + 1); 
       } catch (err) { showNotify("error", err.response?.data?.error || "Failed"); } 
@@ -154,16 +164,15 @@ export default function MemberDashboard({ user, onLogout }) {
   const handlePaypalDeposit = async (e) => { 
       e.preventDefault(); setLoading(true); 
       try { 
-          const res = await api.post('/api/payments/paypal/deposit', paypalForm); 
+          const res = await api.post('/api/payments/paypal/deposit', { ...paypalForm, type: depositPurpose }); 
           alert(res.data.message); 
           setPaypalForm({ amount: '', reference: '' }); setActiveTab('dashboard'); setRefreshKey(k => k + 1); 
       } catch (err) { showNotify("error", err.response?.data?.error || "Failed"); } 
       setLoading(false); 
   };
 
-  const handleRepayment = async (e) => { e.preventDefault(); setLoading(true); try { await api.post("/api/payments/repay-loan", { loanAppId: loanState.id, amount: repayForm.amount, mpesaRef: repayForm.mpesaRef || "REF" }); showNotify("success", "Repayment received!"); setRepayForm({ amount: "", mpesaRef: "" }); setRefreshKey((o) => o + 1); setActiveTab("dashboard"); } catch (e) { showNotify("error", "Failed"); } setLoading(false); };
   const handleLoanStart = async () => { try { await api.post("/api/loan/init"); setRefreshKey(o=>o+1); } catch (e) { showNotify("error", e.response?.data?.error || "Init Failed"); } };
-  const handleLoanFeePayment = async () => { try { await api.post("/api/payments/pay-fee", { loanAppId: loanState.id, mpesaRef: "PAYMENT" + Math.floor(10000 + Math.random() * 90000) }); showNotify("success", "Fee Paid!"); setRefreshKey(o=>o+1); } catch (e) { showNotify("error", "Payment Failed"); } };
+  const handleLoanFeePayment = async () => { setActiveTab('deposit'); setDepositPurpose('LOAN_FORM_FEE'); }; 
   const handleLoanSubmit = async (e) => { e.preventDefault(); const maxLoan = savings.balance * multiplier; if (parseInt(loanForm.amount) > maxLoan) { showNotify("error", `Limit exceeded! Max: ${maxLoan.toLocaleString()}`); return; } try { await api.post("/api/loan/submit", { loanAppId: loanState.id, ...loanForm }); setRefreshKey(o=>o+1); } catch (e) { showNotify("error", e.response?.data?.error || "Submission failed"); } };
   const handleSearch = async (e) => { const q = e.target.value; setSearchQuery(q); if (q.length > 2) { const res = await api.get(`/api/loan/members/search?q=${q}`); setSearchResults(res.data); } else setSearchResults([]); };
   const addGuarantor = async (guarantorId) => { try { await api.post("/api/loan/guarantors/add", { loanId: loanState.id, guarantorId }); setRefreshKey(o=>o+1); setSearchResults([]); setSearchQuery(""); showNotify("success", "Request Sent!"); } catch (err) { showNotify("error", err.response?.data?.error || "Failed"); } };
@@ -188,7 +197,6 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Limit file size to 2MB
       if (file.size > 2 * 1024 * 1024) {
         showNotify("error", "Image too large (Max 2MB)");
         return;
@@ -357,6 +365,44 @@ export default function MemberDashboard({ user, onLogout }) {
         {activeTab === "deposit" && (
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 p-8 max-w-2xl mx-auto print:hidden animate-fade-in">
             <h2 className="text-2xl font-bold mb-6 text-slate-800">Deposit Funds</h2>
+            
+            {/* Payment Purpose Selector (UPDATED) */}
+            <div className="mb-6 p-4 bg-indigo-50 border border-indigo-100 rounded-xl shadow-sm">
+                <label className="block text-xs font-bold text-indigo-900 uppercase mb-2 flex items-center gap-2">
+                    <Layers size={16}/> Select Purpose:
+                </label>
+                <div className="relative">
+                    <select 
+                        className="w-full border border-indigo-200 p-3 pl-10 rounded-xl bg-white font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer"
+                        value={depositPurpose}
+                        onChange={(e) => setDepositPurpose(e.target.value)}
+                    >
+                        {/* Default Options */}
+                        <option value="DEPOSIT">Savings Deposit (General)</option>
+                        <option value="SHARE_CAPITAL">Buy Shares (Share Capital)</option>
+                        <option value="LOAN_REPAYMENT">Loan Repayment</option>
+                        <option value="LOAN_FORM_FEE">Loan Application Fee</option>
+                        <option value="WELFARE">Welfare Contribution</option>
+                        <option value="PENALTY">Pay Penalty/Fine</option>
+                        
+                        {/* Custom Categories (Fetched from Backend) */}
+                        {customCategories.length > 0 && (
+                            <optgroup label="Custom Categories">
+                                {customCategories.map(cat => (
+                                    <option key={cat.id} value={cat.name}>{cat.description || cat.name}</option>
+                                ))}
+                            </optgroup>
+                        )}
+                    </select>
+                    <Coins className="absolute left-3 top-3.5 text-indigo-400" size={18}/>
+                </div>
+                
+                {/* Hints */}
+                {depositPurpose === 'LOAN_REPAYMENT' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Automatically targets your oldest active loan.</p>}
+                {depositPurpose === 'LOAN_FORM_FEE' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Pays the fee for your pending application.</p>}
+                {depositPurpose === 'SHARE_CAPITAL' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Moves funds to your non-withdrawable shares.</p>}
+            </div>
+
             <div className="flex gap-2 mb-6 border-b border-slate-100 pb-4 overflow-x-auto">
                 <button onClick={() => setDepositMethod('MPESA')} className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition ${depositMethod === 'MPESA' ? 'bg-green-600 text-white shadow-lg shadow-green-100' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}><Smartphone size={18} /> M-Pesa</button>
                 <button onClick={() => setDepositMethod('BANK')} className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition ${depositMethod === 'BANK' ? 'bg-red-800 text-white shadow-lg shadow-red-100' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}><Landmark size={18} /> Bank</button>
@@ -382,13 +428,13 @@ export default function MemberDashboard({ user, onLogout }) {
                                 <p className="text-xs text-green-800 font-bold">Step 1: Send Money</p>
                                 <p className="text-[10px] text-green-700 mb-2">Send funds via Paybill/Send Money to our Treasurer.</p>
                                 <p className="text-xs text-green-800 font-bold">Step 2: Enter Reference Code</p>
-                                <p className="text-[10px] text-green-600 mt-1">Once you receive the SMS from M-Pesa, enter the code here to verify and claim your deposit instantly.</p>
+                                <p className="text-[10px] text-green-600 mt-1">Once you receive the SMS from M-Pesa, enter the code here to verify and claim your payment.</p>
                                 <div className="mt-4"><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Transaction Code</label><input type="text" required placeholder="e.g. QWE12345..." className="w-full border p-3 rounded-xl uppercase font-mono" value={depositForm.reference} onChange={(e) => setDepositForm({ ...depositForm, reference: e.target.value })} /></div>
                             </div>
                         )}
                         
                         <button disabled={loading} className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-xl font-bold transition">
-                            {loading ? "Processing..." : (mpesaMode==='STK' ? "Send Request" : "Verify & Claim Deposit")}
+                            {loading ? "Processing..." : (mpesaMode==='STK' ? "Send Request" : "Verify & Claim")}
                         </button>
                     </form>
                 </div>
@@ -500,7 +546,9 @@ export default function MemberDashboard({ user, onLogout }) {
                                             : <span className={`px-2 py-1 rounded-full text-[10px] font-bold border ${getTransactionStyle(t.type)}`}>{t.type}</span>
                                         }
                                     </td>
-                                    <td className={`px-6 py-4 text-right font-bold font-mono ${['DEPOSIT', 'SHARE_CAPITAL'].includes(t.type) ? 'text-emerald-600' : 'text-slate-600'}`}>{['DEPOSIT', 'SHARE_CAPITAL'].includes(t.type) ? '+' : '-'} {parseFloat(t.amount).toLocaleString()}</td>
+                                    <td className={`px-6 py-4 text-right font-bold font-mono ${['DEPOSIT', 'SHARE_CAPITAL'].includes(t.type) && parseFloat(t.amount) > 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                                        {['DEPOSIT', 'SHARE_CAPITAL'].includes(t.type) && parseFloat(t.amount) > 0 ? '+' : ''} {parseFloat(t.amount).toLocaleString()}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>

@@ -94,21 +94,8 @@ const initializeSystem = async () => {
                 BEGIN
                     ALTER TABLE users ADD COLUMN verification_token VARCHAR(255);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
-                
-                -- 3. [MUTED] Phone Verification Columns
-                /*
-                BEGIN
-                    ALTER TABLE users ADD COLUMN is_phone_verified BOOLEAN DEFAULT FALSE;
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN phone_otp VARCHAR(6);
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                BEGIN
-                    ALTER TABLE users ADD COLUMN phone_otp_expires_at TIMESTAMP;
-                EXCEPTION WHEN duplicate_column THEN NULL; END;
-                */
 
-                -- 4. KYC Fields
+                -- 3. KYC Fields
                 BEGIN
                     ALTER TABLE users ADD COLUMN id_number VARCHAR(20);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
@@ -125,11 +112,22 @@ const initializeSystem = async () => {
                     ALTER TABLE users ADD COLUMN next_of_kin_relation VARCHAR(50);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
 
-                -- 5. Profile Image
+                -- 4. Profile Image
                 BEGIN
                     ALTER TABLE users ADD COLUMN profile_image TEXT;
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
             END $$;
+        `);
+
+        // --- NEW: Custom Contribution Categories Table ---
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS contribution_categories (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL UNIQUE,
+                description TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         `);
         console.log("✅ Schema Verified (Columns synced automatically)");
 
