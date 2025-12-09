@@ -3,7 +3,7 @@ import api from "../api";
 import {
   CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus,
   Search, UserCheck, UserX, Inbox, Vote, ThumbsUp, ThumbsDown, Printer, FileText, Smartphone, Landmark, Globe,
-  ShieldCheck, Download, Loader // Added Loader Icon
+  ShieldCheck, Download, Loader
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -11,7 +11,7 @@ import DashboardHeader from "../components/DashboardHeader";
 export default function MemberDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(false);
-  const [downloading, setDownloading] = useState(false); // New state for PDF download
+  const [downloading, setDownloading] = useState(false); 
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [savings, setSavings] = useState({ balance: 0, history: [] });
@@ -22,7 +22,6 @@ export default function MemberDashboard({ user, onLogout }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [incomingRequests, setIncomingRequests] = useState([]);
   
-  // New State for Weekly Progress
   const [weeklyStats, setWeeklyStats] = useState({ total: 0, goal: 250, isComplete: false });
 
   const [multiplier, setMultiplier] = useState(3); 
@@ -44,7 +43,7 @@ export default function MemberDashboard({ user, onLogout }) {
       try {
         const [balanceRes, historyRes, loanRes, reqRes, voteRes, settingsRes] = await Promise.all([
             api.get("/api/deposits/balance"),
-            api.get("/api/deposits/history"), // We will filter this locally for weekly stats
+            api.get("/api/deposits/history"), 
             api.get("/api/loan/status"),
             api.get("/api/loan/guarantors/requests"),
             api.get("/api/loan/vote/open"),
@@ -68,14 +67,12 @@ export default function MemberDashboard({ user, onLogout }) {
           if (minSetting) minWeekly = parseFloat(minSetting.setting_value);
         }
 
-        // CALCULATE WEEKLY PROGRESS (Client Side Logic)
-        // 1. Get start of week (Monday)
+        // Weekly Progress
         const now = new Date();
-        const day = now.getDay() || 7; // Get current day number, converting Sun (0) to 7
-        if (day !== 1) now.setHours(-24 * (day - 1)); // Go back to Monday
-        now.setHours(0, 0, 0, 0); // Start of Monday
+        const day = now.getDay() || 7; 
+        if (day !== 1) now.setHours(-24 * (day - 1)); 
+        now.setHours(0, 0, 0, 0); 
 
-        // 2. Sum deposits since Monday
         const weekTotal = (historyRes.data || [])
             .filter(t => t.type === 'DEPOSIT' && new Date(t.created_at) >= now)
             .reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
@@ -101,7 +98,7 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const showNotify = (type, msg) => { setToast({ type, msg }); setTimeout(() => setToast(null), 5000); };
 
-  // Handlers
+  // --- HANDLERS ---
   const handleMpesaDeposit = async (e) => { e.preventDefault(); setLoading(true); try { const res = await api.post("/api/payments/mpesa/stk-push", { amount: depositForm.amount, phoneNumber: depositForm.phoneNumber, type: 'DEPOSIT' }); if (res.data.success) { alert(`STK Push Sent! Check your phone (${depositForm.phoneNumber}) to enter PIN.`); setDepositForm({ amount: "", phoneNumber: "" }); setActiveTab("dashboard"); } } catch (e) { showNotify("error", e.response?.data?.error || "M-Pesa Failed"); } setLoading(false); };
   const handleBankDeposit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/payments/bank/deposit', bankForm); alert(`Success: Deposit recorded!`); setBankForm({ amount: '', reference: '', bankName: '' }); setActiveTab('dashboard'); setRefreshKey(k => k + 1); } catch (err) { showNotify("error", err.response?.data?.error || "Bank Deposit Failed"); } setLoading(false); };
   const handlePaypalDeposit = async (e) => { e.preventDefault(); setLoading(true); try { await api.post('/api/payments/paypal/deposit', paypalForm); alert("PayPal Transfer Recorded!"); setPaypalForm({ amount: '', reference: '' }); setActiveTab('dashboard'); setRefreshKey(k => k + 1); } catch (err) { showNotify("error", err.response?.data?.error || "PayPal Deposit Failed"); } setLoading(false); };
@@ -126,23 +123,15 @@ export default function MemberDashboard({ user, onLogout }) {
   const handleVote = async (loanId, decision) => { try { await api.post("/api/loan/vote", { loanId, decision }); setRefreshKey(k=>k+1); showNotify("success", "Vote Cast!"); } catch (err) { showNotify("error", err.response?.data?.error || "Voting Failed"); } };
   const handlePrint = () => { window.print(); };
 
-  // --- UPDATED: PDF Statement Download Handler ---
   const handleDownloadStatement = async () => {
     if (downloading) return;
     setDownloading(true);
     try {
       showNotify("success", "Generating PDF...");
-      
-      const response = await api.get('/api/reports/statement/me', {
-        responseType: 'blob',
-      });
-
+      const response = await api.get('/api/reports/statement/me', { responseType: 'blob' });
       const safeName = user.name ? user.name.replace(/[^a-zA-Z0-9]/g, '_') : 'Member';
       const now = new Date();
-      const dateStr = now.toISOString().split('T')[0];
-      const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-      const fileName = `${safeName}_Statement_${dateStr}_${timeStr}.pdf`;
-
+      const fileName = `${safeName}_Statement_${now.toISOString().split('T')[0]}.pdf`;
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -150,18 +139,35 @@ export default function MemberDashboard({ user, onLogout }) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      
-    } catch (err) {
-      console.error(err);
-      showNotify("error", "Failed to generate statement.");
-    } finally {
-        setDownloading(false);
-    }
+    } catch (err) { console.error(err); showNotify("error", "Failed to generate statement."); } finally { setDownloading(false); }
   };
   
-  // Filter channels
   const bankChannels = paymentChannels.filter(c => c.type === 'BANK');
   const paypalChannels = paymentChannels.filter(c => c.type === 'PAYPAL');
+
+  // --- COLOR HELPER FOR FEE TYPES ---
+  const getTransactionStyle = (type) => {
+    switch (type) {
+        case 'DEPOSIT':
+        case 'SHARE_CAPITAL':
+        case 'DIVIDEND':
+            return 'bg-emerald-100 text-emerald-700 border-emerald-200'; // Green (Inflow)
+        case 'WITHDRAWAL':
+        case 'LOAN_DISBURSEMENT':
+            return 'bg-slate-100 text-slate-700 border-slate-200'; // Gray (Neutral/Outflow)
+        case 'LOAN_REPAYMENT':
+            return 'bg-indigo-100 text-indigo-700 border-indigo-200'; // Purple (Repayment)
+        case 'FINE':
+        case 'PENALTY':
+            return 'bg-red-100 text-red-700 border-red-200'; // Red (Punitive)
+        case 'REGISTRATION_FEE':
+        case 'LOAN_FORM_FEE':
+        case 'FEE_PAYMENT':
+            return 'bg-amber-100 text-amber-700 border-amber-200'; // Orange (Fees)
+        default:
+            return 'bg-blue-50 text-blue-600 border-blue-100';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-12 relative">
@@ -172,8 +178,7 @@ export default function MemberDashboard({ user, onLogout }) {
         
         {/* TOP STATS ROW */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 print:hidden">
-          
-          {/* 1. BALANCE CARD */}
+          {/* BALANCE CARD */}
           <div className="bg-slate-900 rounded-2xl p-8 text-white shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10"><PiggyBank size={120} /></div>
             <div className="relative z-10">
@@ -186,7 +191,7 @@ export default function MemberDashboard({ user, onLogout }) {
             </div>
           </div>
 
-          {/* 2. WEEKLY GOAL TRACKER */}
+          {/* WEEKLY GOAL TRACKER */}
           <div className={`rounded-2xl p-6 border shadow-sm flex flex-col justify-center ${weeklyStats.isComplete ? 'bg-emerald-50 border-emerald-100' : 'bg-white border-slate-100'}`}>
             <div className="flex items-center gap-2 mb-2">
                 <ShieldCheck size={20} className={weeklyStats.isComplete ? "text-emerald-600" : "text-amber-500"} />
@@ -210,7 +215,7 @@ export default function MemberDashboard({ user, onLogout }) {
             )}
           </div>
 
-          {/* 3. NOTIFICATIONS */}
+          {/* NOTIFICATIONS */}
           <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm overflow-hidden flex flex-col h-full">
             <div className="flex items-center gap-2 text-slate-500 mb-4 font-bold text-sm uppercase tracking-wider"><Inbox size={16} /> Actions</div>
             <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar max-h-[150px]">
@@ -364,7 +369,38 @@ export default function MemberDashboard({ user, onLogout }) {
                   </div>
               </div>
               {savings.history.length === 0 ? <div className="p-12 text-center text-slate-400 flex flex-col items-center"><AlertCircle size={48} className="mb-4 opacity-20"/><p>No contributions found.</p></div> : 
-                  <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs print:bg-white print:text-black print:border-b"><tr><th className="px-6 py-4">Date</th><th className="px-6 py-4">Reference</th><th className="px-6 py-4">Type</th><th className="px-6 py-4 text-right">Amount</th></tr></thead><tbody className="divide-y divide-slate-100 print:divide-slate-200">{savings.history.map((t) => <tr key={t.id} className="hover:bg-slate-50 print:hover:bg-transparent"><td className="px-6 py-4 text-slate-600">{new Date(t.created_at).toLocaleDateString()}</td><td className="px-6 py-4 font-mono text-xs text-slate-500">{t.transaction_ref || '-'}</td><td className="px-6 py-4"><span className={`px-2 py-1 rounded-full text-[10px] font-bold print:border print:border-slate-300 ${t.type === 'DEPOSIT' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{t.type}</span></td><td className={`px-6 py-4 text-right font-bold font-mono ${t.type === 'DEPOSIT' ? 'text-emerald-600' : 'text-slate-600'}`}>{t.type === 'DEPOSIT' ? '+' : '-'} {parseFloat(t.amount).toLocaleString()}</td></tr>)}</tbody></table></div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs print:bg-white print:text-black print:border-b">
+                            <tr>
+                                <th className="px-6 py-4">Date</th>
+                                <th className="px-6 py-4">Ref</th>
+                                <th className="px-6 py-4">Description</th>
+                                <th className="px-6 py-4">Type</th>
+                                <th className="px-6 py-4 text-right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 print:divide-slate-200">
+                            {savings.history.map((t) => (
+                                <tr key={t.id} className="hover:bg-slate-50 print:hover:bg-transparent">
+                                    <td className="px-6 py-4 text-slate-600">{new Date(t.created_at).toLocaleDateString()}</td>
+                                    {/* FIX: Use reference_code not transaction_ref */}
+                                    <td className="px-6 py-4 font-mono text-xs text-slate-500">{t.reference_code || '-'}</td>
+                                    {/* ADDED: Description Column */}
+                                    <td className="px-6 py-4 text-slate-700 max-w-[200px] truncate">{t.description || '-'}</td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold border ${getTransactionStyle(t.type)}`}>
+                                            {t.type}
+                                        </span>
+                                    </td>
+                                    <td className={`px-6 py-4 text-right font-bold font-mono ${['DEPOSIT', 'SHARE_CAPITAL', 'DIVIDEND', 'LOAN_DISBURSEMENT'].includes(t.type) ? 'text-emerald-600' : 'text-slate-600'}`}>
+                                        {['DEPOSIT', 'SHARE_CAPITAL', 'DIVIDEND'].includes(t.type) ? '+' : '-'} {parseFloat(t.amount).toLocaleString()}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                  </div>
               }
               <div className="hidden print:block mt-8 text-center text-xs text-slate-400 border-t pt-4"><p>End of Statement • System Generated</p></div>
             </div>

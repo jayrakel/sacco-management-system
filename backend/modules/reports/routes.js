@@ -70,7 +70,7 @@ async function drawHeader(doc, title, user, details, serialNo) {
 }
 
 // ============================================================================
-// ROUTE 1: MEMBER STATEMENT (With Totals)
+// ROUTE 1: MEMBER STATEMENT (With Totals & REF Column)
 // ============================================================================
 router.get('/statement/me', authenticateUser, async (req, res) => {
     try {
@@ -97,11 +97,18 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
 
         await drawHeader(doc, 'Account Statement', user, sacco, serialNo);
 
-        // Member Table Logic
+        // -- UPDATED TABLE LAYOUT --
         let y = doc.y + 20;
         doc.rect(50, y - 5, 500, 20).fill('#f0f0f0').stroke();
-        doc.fillColor('#333').font('Helvetica-Bold').fontSize(9);
-        doc.text('DATE/TIME', 50, y).text('DESCRIPTION', 140, y).text('DEBIT', 370, y).text('CREDIT', 440, y).text('BALANCE', 510, y);
+        doc.fillColor('#333').font('Helvetica-Bold').fontSize(8);
+        
+        // Columns: DATE (50), REF (120), DESC (190), DEBIT (350), CREDIT (420), BAL (490)
+        doc.text('DATE', 50, y)
+           .text('REF', 120, y)
+           .text('DESCRIPTION', 190, y)
+           .text('DEBIT', 360, y, { align: 'right', width: 50 })
+           .text('CREDIT', 430, y, { align: 'right', width: 50 })
+           .text('BALANCE', 500, y, { align: 'right', width: 50 });
         
         y += 25;
         doc.font('Helvetica').fontSize(8);
@@ -113,6 +120,8 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
             if (y > 720) { doc.addPage(); y = 50; }
             const amt = parseFloat(tx.amount);
             let moneyIn = 0, moneyOut = 0;
+            
+            // Logic: Inflows vs Outflows
             const IN_TYPES = ['DEPOSIT', 'LOAN_DISBURSEMENT', 'DIVIDEND'];
             
             if (IN_TYPES.includes(tx.type)) { 
@@ -125,22 +134,38 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
                 runningBalance -= amt; 
             }
 
+            // Zebra Striping
             if (i % 2 === 0) doc.rect(50, y - 2, 500, 20).fillColor('#fbfbfb').fill();
             doc.fillColor('#000');
 
             const date = new Date(tx.created_at);
-            doc.text(date.toLocaleDateString(), 50, y);
-            doc.fontSize(7).fillColor('#666').text(date.toLocaleTimeString(), 50, y + 10).fontSize(8).fillColor('#000');
-            doc.text(tx.description || tx.type, 140, y, { width: 200, ellipsis: true });
             
-            if(moneyOut > 0) doc.fillColor('#b91c1c').text(moneyOut.toLocaleString(), 370, y); else doc.text('-', 370, y);
-            if(moneyIn > 0) doc.fillColor('#047857').text(moneyIn.toLocaleString(), 440, y); else doc.text('-', 440, y);
-            doc.fillColor('#000').text(runningBalance.toLocaleString(), 510, y);
+            // 1. Date
+            doc.text(date.toLocaleDateString(), 50, y);
+            
+            // 2. Reference (NEW)
+            doc.text(tx.reference_code || '-', 120, y, { width: 65, ellipsis: true });
+
+            // 3. Description (Truncated)
+            const desc = tx.description ? tx.description : tx.type.replace(/_/g, ' ');
+            doc.text(desc, 190, y, { width: 160, ellipsis: true });
+            
+            // 4. Debit (Out)
+            if(moneyOut > 0) doc.fillColor('#b91c1c').text(moneyOut.toLocaleString(), 360, y, { align: 'right', width: 50 }); 
+            else doc.text('-', 360, y, { align: 'right', width: 50 });
+
+            // 5. Credit (In)
+            if(moneyIn > 0) doc.fillColor('#047857').text(moneyIn.toLocaleString(), 430, y, { align: 'right', width: 50 }); 
+            else doc.text('-', 430, y, { align: 'right', width: 50 });
+
+            // 6. Balance
+            doc.fillColor('#000').text(runningBalance.toLocaleString(), 500, y, { align: 'right', width: 50 });
+            
             y += 22;
         });
 
         // --- STATEMENT SUMMARY FOOTER ---
-        if (y > 650) { doc.addPage(); y = 50; } // Ensure space for summary
+        if (y > 650) { doc.addPage(); y = 50; } 
         y += 10;
         
         doc.moveTo(50, y).lineTo(550, y).strokeColor('#333').stroke();
@@ -153,11 +178,11 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
         let sumY = y + 10;
         doc.font('Helvetica-Bold').fontSize(9);
         
-        doc.text('TOTAL CREDITS (In):', 310, sumY);
+        doc.text('TOTAL INFLOW:', 310, sumY);
         doc.fillColor('#047857').text(`KES ${totalCredit.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
         
         sumY += 15;
-        doc.fillColor('#1e293b').text('TOTAL DEBITS (Out):', 310, sumY);
+        doc.fillColor('#1e293b').text('TOTAL OUTFLOW:', 310, sumY);
         doc.fillColor('#b91c1c').text(`KES ${totalDebit.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
         
         sumY += 20;
@@ -181,7 +206,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         const sacco = await getSaccoDetails();
         const now = new Date();
 
-        // 1. Fetch High Level Stats (Fast Queries)
+        // 1. Fetch High Level Stats
         const savingsRes = await db.query("SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'COMPLETED' AND type = 'DEPOSIT'");
         const netSavings = parseFloat(savingsRes.rows[0].total);
         
@@ -195,9 +220,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         const liquidityRes = await db.query(`SELECT COALESCE(SUM(CASE WHEN type IN ('DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'PENALTY', 'REGISTRATION_FEE', 'FEE_PAYMENT') THEN amount ELSE 0 END), 0) as inflow, COALESCE(SUM(CASE WHEN type IN ('LOAN_DISBURSEMENT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as outflow FROM transactions`);
         const cashOnHand = parseFloat(liquidityRes.rows[0].inflow) - parseFloat(liquidityRes.rows[0].outflow);
 
-        // 2. Fetch FULL Transaction History (Removed LIMIT 50)
-        // Note: For production with >10k rows, this should be paginated or streamed via cursor. 
-        // For this version 0.0.7, standard query is acceptable.
+        // 2. Fetch FULL Transaction History
         const recentTx = await db.query(`
             SELECT t.*, u.full_name 
             FROM transactions t 
@@ -262,7 +285,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
             let moneyIn = 0, moneyOut = 0;
             // Logic for Sacco perspective: 
             // Deposit = Money IN to Sacco. Loan Disbursement = Money OUT from Sacco.
-            const IN_TYPES = ['DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'REGISTRATION_FEE', 'FEE_PAYMENT', 'PENALTY', 'LOAN_FORM_FEE'];
+            const IN_TYPES = ['DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'REGISTRATION_FEE', 'FEE_PAYMENT', 'PENALTY', 'LOAN_FORM_FEE', 'SHARE_CAPITAL', 'DIVIDEND'];
             
             if (IN_TYPES.includes(tx.type)) { 
                 moneyIn = amt;
@@ -327,7 +350,6 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
     }
 });
 
-// ROUTE 3: JSON SUMMARY (Keep existing logic for Dashboard)
 router.get('/summary', authenticateUser, async (req, res) => {
     try {
         if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
