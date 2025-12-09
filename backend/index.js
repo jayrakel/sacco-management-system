@@ -124,6 +124,11 @@ const initializeSystem = async () => {
                 BEGIN
                     ALTER TABLE users ADD COLUMN next_of_kin_relation VARCHAR(50);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
+
+                -- 5. Profile Image
+                BEGIN
+                    ALTER TABLE users ADD COLUMN profile_image TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
             END $$;
         `);
         console.log("✅ Schema Verified (Columns synced automatically)");

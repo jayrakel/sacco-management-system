@@ -3,7 +3,7 @@ import api from "../api";
 import {
   CreditCard, PiggyBank, TrendingUp, CheckCircle, Banknote, Clock, AlertCircle, UserPlus,
   Search, Inbox, Vote, ThumbsUp, Printer, FileText, Smartphone, Landmark, Globe,
-  ShieldCheck, Download, Loader, Send, User, Settings, Lock, Save
+  ShieldCheck, Download, Loader, Send, User, Settings, Lock, Save, Camera
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import DashboardHeader from "../components/DashboardHeader";
@@ -33,7 +33,8 @@ export default function MemberDashboard({ user, onLogout }) {
   // Profile State
   const [profile, setProfile] = useState({
     full_name: "", email: "", phone_number: "", id_number: "", kra_pin: "",
-    next_of_kin_name: "", next_of_kin_phone: "", next_of_kin_relation: ""
+    next_of_kin_name: "", next_of_kin_phone: "", next_of_kin_relation: "",
+    profile_image: ""
   });
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
 
@@ -184,6 +185,22 @@ export default function MemberDashboard({ user, onLogout }) {
     setLoading(false);
   };
 
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Limit file size to 2MB
+      if (file.size > 2 * 1024 * 1024) {
+        showNotify("error", "Image too large (Max 2MB)");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfile({ ...profile, profile_image: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handlePasswordChange = async (e) => {
     e.preventDefault();
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
@@ -260,6 +277,25 @@ export default function MemberDashboard({ user, onLogout }) {
                     </div>
                     
                     <form onSubmit={handleProfileUpdate} className="space-y-4">
+                        {/* Profile Image Section */}
+                        <div className="flex items-center gap-4 mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                            <div className="relative group cursor-pointer">
+                                {profile.profile_image ? (
+                                    <img src={profile.profile_image} alt="Profile" className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-md" />
+                                ) : (
+                                    <div className="w-20 h-20 rounded-full bg-slate-200 flex items-center justify-center text-slate-400 border-2 border-white shadow-md"><User size={40}/></div>
+                                )}
+                                <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Camera size={20} className="text-white"/>
+                                </div>
+                                <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleImageUpload} />
+                            </div>
+                            <div className="flex-1">
+                                <p className="text-sm font-bold text-slate-700">Profile Photo</p>
+                                <p className="text-xs text-slate-500">Click image to update. Max 2MB.</p>
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-4">
                             <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Full Name</label><input type="text" className="w-full border p-3 rounded-xl bg-slate-50" value={profile.full_name || ''} onChange={(e) => setProfile({...profile, full_name: e.target.value})} required /></div>
                             <div><label className="text-xs font-bold text-slate-500 uppercase mb-1">Phone Number</label><input type="tel" className="w-full border p-3 rounded-xl bg-slate-50" value={profile.phone_number || ''} onChange={(e) => setProfile({...profile, phone_number: e.target.value})} required /></div>

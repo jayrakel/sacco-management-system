@@ -216,6 +216,7 @@ router.get('/profile', authenticateUser, async (req, res) => {
         const result = await db.query(
             `SELECT id, full_name, email, phone_number, role, 
             id_number, kra_pin, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, 
+            profile_image,
             created_at, is_active 
             FROM users WHERE id = $1`,
             [req.user.id]
@@ -230,7 +231,7 @@ router.get('/profile', authenticateUser, async (req, res) => {
 
 // UPDATE CURRENT USER PROFILE
 router.put('/profile', authenticateUser, async (req, res) => {
-    const { full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation } = req.body;
+    const { full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, profile_image } = req.body;
     
     try {
         // Validation (Basic)
@@ -244,9 +245,10 @@ router.put('/profile', authenticateUser, async (req, res) => {
                 phone_number = COALESCE($2, phone_number),
                 next_of_kin_name = COALESCE($3, next_of_kin_name),
                 next_of_kin_phone = COALESCE($4, next_of_kin_phone),
-                next_of_kin_relation = COALESCE($5, next_of_kin_relation)
-            WHERE id = $6`,
-            [full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, req.user.id]
+                next_of_kin_relation = COALESCE($5, next_of_kin_relation),
+                profile_image = COALESCE($6, profile_image)
+            WHERE id = $7`,
+            [full_name, phone_number, next_of_kin_name, next_of_kin_phone, next_of_kin_relation, profile_image, req.user.id]
         );
         
         res.json({ message: "Profile updated successfully" });

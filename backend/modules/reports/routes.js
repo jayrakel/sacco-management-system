@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../db');
-const { authenticateUser, requireRole } = require('../auth/middleware');
+const { authenticateUser } = require('../auth/middleware');
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 
@@ -23,7 +23,7 @@ async function getSaccoDetails() {
 async function drawHeader(doc, title, user, details, serialNo) {
     const now = new Date();
 
-    // 1. Draw Logo
+    // 1. Draw Sacco Logo (Top Left)
     if (details.logo && details.logo.startsWith('data:image')) {
         try {
             const imgData = details.logo.split(',')[1];
@@ -32,7 +32,7 @@ async function drawHeader(doc, title, user, details, serialNo) {
         } catch (e) { console.error("Logo Error:", e); }
     }
 
-    // 2. Sacco Details
+    // 2. Sacco Details (Top Right)
     doc.font('Helvetica-Bold').fontSize(16).text(details.name, 200, 50, { align: 'right' });
     doc.font('Helvetica').fontSize(9).text(details.address, 200, 70, { align: 'right' });
     doc.text(`Tel: ${details.phone} | Email: ${details.email}`, 200, 85, { align: 'right' });
@@ -52,7 +52,19 @@ async function drawHeader(doc, title, user, details, serialNo) {
     doc.text(`Role: ${user.role}`, 50, topY + 30);
     doc.text(`ID: ${user.id_number || 'Internal'}`, 50, topY + 45);
 
+    // 4b. Draw Member Photo (Next to details)
+    if (user.profile_image && user.profile_image.startsWith('data:image')) {
+        try {
+            const imgData = user.profile_image.split(',')[1];
+            const imgBuffer = Buffer.from(imgData, 'base64');
+            // Place image at x=200, aligned with topY
+            doc.image(imgBuffer, 220, topY - 5, { width: 60, height: 60, fit: [60, 60] });
+            doc.rect(220, topY - 5, 60, 60).strokeColor('#cccccc').stroke(); // Border
+        } catch (e) { console.error("Member Photo Error:", e); }
+    }
+
     // Right: Document Info
+    doc.fillColor('black');
     doc.font('Helvetica-Bold').text('DOCUMENT DETAILS:', 350, topY);
     doc.font('Helvetica').text(`Date: ${now.toLocaleDateString()}`, 350, topY + 15);
     doc.text(`Time: ${now.toLocaleTimeString()}`, 350, topY + 30);
@@ -70,52 +82,7 @@ async function drawHeader(doc, title, user, details, serialNo) {
 }
 
 // ============================================================================
-// NEW ROUTE: ACTIVE PORTFOLIO (FIX FOR EMPTY DASHBOARDS)
-// ============================================================================
-router.get('/active-portfolio', authenticateUser, async (req, res) => {
-    // Allow these roles to access the portfolio data
-    const allowedRoles = ['ADMIN', 'TREASURER', 'SECRETARY', 'CHAIRPERSON', 'LOAN_OFFICER'];
-    if (!allowedRoles.includes(req.user.role)) {
-        return res.status(403).json({ error: "Access Denied" });
-    }
-
-    try {
-        const result = await db.query(
-            `SELECT l.id, u.full_name, l.amount_requested, l.total_due, l.amount_repaid, 
-                    l.disbursed_at, l.repayment_weeks,
-                    (l.total_due - l.amount_repaid) as outstanding_balance
-             FROM loan_applications l
-             JOIN users u ON l.user_id = u.id
-             WHERE l.status = 'ACTIVE'
-             ORDER BY l.disbursed_at DESC`
-        );
-
-        // Calculate health status for each loan
-        const portfolio = result.rows.map(loan => {
-            const totalDue = parseFloat(loan.total_due || 0);
-            const repaid = parseFloat(loan.amount_repaid || 0);
-            // Calculate progress percentage safely
-            const progress = totalDue > 0 ? (repaid / totalDue) * 100 : 0;
-            
-            return { 
-                ...loan, 
-                amount_requested: parseFloat(loan.amount_requested || 0),
-                total_due: totalDue,
-                amount_repaid: repaid,
-                outstanding_balance: parseFloat(loan.outstanding_balance || 0),
-                progress: progress.toFixed(1) 
-            };
-        });
-
-        res.json(portfolio);
-    } catch (err) {
-        console.error("Portfolio fetch error:", err);
-        res.status(500).json({ error: "Could not fetch portfolio" });
-    }
-});
-
-// ============================================================================
-// ROUTE: MEMBER STATEMENT
+// ROUTE 1: MEMBER STATEMENT (With Totals & REF Column)
 // ============================================================================
 router.get('/statement/me', authenticateUser, async (req, res) => {
     try {
@@ -130,6 +97,7 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
         const user = userRes.rows[0];
         const transactions = txRes.rows;
         
+        // Clean filename
         const safeName = user.full_name.replace(/[^a-zA-Z0-9]/g, '_');
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `${safeName}_Statement_${timestamp}.pdf`;
@@ -141,10 +109,12 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
 
         await drawHeader(doc, 'Account Statement', user, sacco, serialNo);
 
+        // -- UPDATED TABLE LAYOUT --
         let y = doc.y + 20;
         doc.rect(50, y - 5, 500, 20).fill('#f0f0f0').stroke();
         doc.fillColor('#333').font('Helvetica-Bold').fontSize(8);
         
+        // Columns: DATE (50), REF (120), DESC (190), DEBIT (350), CREDIT (420), BAL (490)
         doc.text('DATE', 50, y)
            .text('REF', 120, y)
            .text('DESCRIPTION', 190, y)
@@ -163,6 +133,7 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
             const amt = parseFloat(tx.amount);
             let moneyIn = 0, moneyOut = 0;
             
+            // Logic: Inflows vs Outflows
             const IN_TYPES = ['DEPOSIT', 'LOAN_DISBURSEMENT', 'DIVIDEND'];
             
             if (IN_TYPES.includes(tx.type)) { 
@@ -175,35 +146,50 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
                 runningBalance -= amt; 
             }
 
+            // Zebra Striping
             if (i % 2 === 0) doc.rect(50, y - 2, 500, 20).fillColor('#fbfbfb').fill();
             doc.fillColor('#000');
 
             const date = new Date(tx.created_at);
+            
+            // 1. Date
             doc.text(date.toLocaleDateString(), 50, y);
+            
+            // 2. Reference (NEW)
             doc.text(tx.reference_code || '-', 120, y, { width: 65, ellipsis: true });
+
+            // 3. Description (Truncated)
             const desc = tx.description ? tx.description : tx.type.replace(/_/g, ' ');
             doc.text(desc, 190, y, { width: 160, ellipsis: true });
             
+            // 4. Debit (Out)
             if(moneyOut > 0) doc.fillColor('#b91c1c').text(moneyOut.toLocaleString(), 360, y, { align: 'right', width: 50 }); 
             else doc.text('-', 360, y, { align: 'right', width: 50 });
 
+            // 5. Credit (In)
             if(moneyIn > 0) doc.fillColor('#047857').text(moneyIn.toLocaleString(), 430, y, { align: 'right', width: 50 }); 
             else doc.text('-', 430, y, { align: 'right', width: 50 });
 
+            // 6. Balance
             doc.fillColor('#000').text(runningBalance.toLocaleString(), 500, y, { align: 'right', width: 50 });
+            
             y += 22;
         });
 
+        // --- STATEMENT SUMMARY FOOTER ---
         if (y > 650) { doc.addPage(); y = 50; } 
         y += 10;
+        
         doc.moveTo(50, y).lineTo(550, y).strokeColor('#333').stroke();
         y += 10;
 
+        // Draw Summary Box
         doc.rect(300, y, 250, 65).fillColor('#f8fafc').fillAndStroke('#e2e8f0');
         doc.fillColor('#1e293b');
         
         let sumY = y + 10;
         doc.font('Helvetica-Bold').fontSize(9);
+        
         doc.text('TOTAL INFLOW:', 310, sumY);
         doc.fillColor('#047857').text(`KES ${totalCredit.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
         
@@ -222,7 +208,7 @@ router.get('/statement/me', authenticateUser, async (req, res) => {
 });
 
 // ============================================================================
-// ROUTE: MASTER LEDGER PDF
+// ROUTE 2: CHAIRPERSON FULL FINANCIAL LEDGER
 // ============================================================================
 router.get('/summary/download', authenticateUser, async (req, res) => {
     try {
@@ -232,6 +218,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         const sacco = await getSaccoDetails();
         const now = new Date();
 
+        // 1. Fetch High Level Stats
         const savingsRes = await db.query("SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status = 'COMPLETED' AND type = 'DEPOSIT'");
         const netSavings = parseFloat(savingsRes.rows[0].total);
         
@@ -245,8 +232,15 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         const liquidityRes = await db.query(`SELECT COALESCE(SUM(CASE WHEN type IN ('DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'PENALTY', 'REGISTRATION_FEE', 'FEE_PAYMENT') THEN amount ELSE 0 END), 0) as inflow, COALESCE(SUM(CASE WHEN type IN ('LOAN_DISBURSEMENT', 'WITHDRAWAL') THEN amount ELSE 0 END), 0) as outflow FROM transactions`);
         const cashOnHand = parseFloat(liquidityRes.rows[0].inflow) - parseFloat(liquidityRes.rows[0].outflow);
 
-        const recentTx = await db.query(`SELECT t.*, u.full_name FROM transactions t JOIN users u ON t.user_id = u.id ORDER BY t.created_at DESC`);
+        // 2. Fetch FULL Transaction History
+        const recentTx = await db.query(`
+            SELECT t.*, u.full_name 
+            FROM transactions t 
+            JOIN users u ON t.user_id = u.id 
+            ORDER BY t.created_at DESC
+        `);
 
+        // --- PDF GENERATION ---
         const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
         const filename = `${sacco.name.replace(/ /g,'_')}_Master_Ledger_${timestamp}.pdf`;
 
@@ -257,6 +251,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
 
         await drawHeader(doc, 'Master Financial Ledger', req.user, sacco, serialNo);
 
+        // --- SECTION 1: FINANCIAL HEALTH (Summary) ---
         let y = doc.y + 10;
         doc.font('Helvetica-Bold').fontSize(12).fillColor('#1e293b').text('1. FINANCIAL POSITION SUMMARY', 50, y);
         doc.moveTo(50, y + 15).lineTo(250, y + 15).stroke();
@@ -269,26 +264,29 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         };
 
         drawStatBox(50, 'Total Assets (Savings + Revenue)', (netSavings + totalRevenue), '#0f172a');
-        drawStatBox(210, 'Liquid Cash Available', cashOnHand, '#059669'); 
-        drawStatBox(370, 'Outstanding Loan Risk', outstanding, '#b91c1c'); 
+        drawStatBox(210, 'Liquid Cash Available', cashOnHand, '#059669'); // Green
+        drawStatBox(370, 'Outstanding Loan Risk', outstanding, '#b91c1c'); // Red
 
         y += 70;
 
+        // --- SECTION 2: SYSTEM LEDGER (Money In/Out) ---
         doc.font('Helvetica-Bold').fontSize(12).fillColor('#1e293b').text('2. FULL SYSTEM LEDGER (Audit Trail)', 50, y);
         doc.moveTo(50, y + 15).lineTo(350, y + 15).stroke();
         
         y += 30;
+        // Table Headers
         doc.rect(50, y - 5, 500, 20).fill('#e2e8f0').stroke();
         doc.fillColor('#333').fontSize(8);
         doc.text('DATE/TIME', 50, y);
         doc.text('MEMBER / DESC', 120, y);
         doc.text('REF', 280, y);
-        doc.text('MONEY OUT', 350, y); 
-        doc.text('MONEY IN', 430, y);  
+        doc.text('MONEY OUT', 350, y); // Debit
+        doc.text('MONEY IN', 430, y);  // Credit
         
         y += 25;
         doc.font('Helvetica');
 
+        // Track totals for the ledger
         let totalLedgerIn = 0;
         let totalLedgerOut = 0;
 
@@ -297,6 +295,8 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
 
             const amt = parseFloat(tx.amount);
             let moneyIn = 0, moneyOut = 0;
+            // Logic for Sacco perspective: 
+            // Deposit = Money IN to Sacco. Loan Disbursement = Money OUT from Sacco.
             const IN_TYPES = ['DEPOSIT', 'LOAN_REPAYMENT', 'FINE', 'REGISTRATION_FEE', 'FEE_PAYMENT', 'PENALTY', 'LOAN_FORM_FEE', 'SHARE_CAPITAL', 'DIVIDEND'];
             
             if (IN_TYPES.includes(tx.type)) { 
@@ -307,16 +307,23 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
                 totalLedgerOut += amt;
             }
 
+            // Zebra Striping
             if (i % 2 === 0) doc.rect(50, y - 2, 500, 20).fillColor('#f8fafc').fill();
             doc.fillColor('#334155');
 
             const txDate = new Date(tx.created_at);
+            // Date Column
             doc.text(txDate.toLocaleDateString(), 50, y);
             doc.fontSize(7).fillColor('#94a3b8').text(txDate.toLocaleTimeString(), 50, y + 10).fontSize(8).fillColor('#334155');
+            
+            // Desc Column
             doc.text(tx.full_name, 120, y, { width: 150, ellipsis: true });
             doc.fontSize(7).fillColor('#64748b').text(tx.description || tx.type, 120, y + 10).fontSize(8).fillColor('#334155');
+
+            // Ref Column
             doc.text(tx.reference_code || '-', 280, y + 5);
 
+            // Money Columns
             if (moneyOut > 0) doc.fillColor('#dc2626').text(moneyOut.toLocaleString(), 350, y + 5);
             else doc.text('-', 350, y + 5);
 
@@ -326,6 +333,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
             y += 25;
         });
 
+        // --- LEDGER TOTALS ---
         if (y > 650) { doc.addPage(); y = 50; }
         y += 10;
         doc.rect(300, y, 250, 50).fillColor('#f1f5f9').fillAndStroke('#cbd5e1');
@@ -340,6 +348,7 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
         doc.fillColor('#0f172a').text('TOTAL OUTFLOW:', 310, sumY);
         doc.fillColor('#dc2626').text(`KES ${totalLedgerOut.toLocaleString()}`, 310, sumY, { align: 'right', width: 230 });
 
+        // --- FOOTER ---
         const bottomY = 730;
         doc.fontSize(8).fillColor('#94a3b8');
         doc.text('This is an official document generated by the Sacco Management System.', 50, bottomY, { align: 'center' });
@@ -353,9 +362,6 @@ router.get('/summary/download', authenticateUser, async (req, res) => {
     }
 });
 
-// ============================================================================
-// ROUTE: JSON SUMMARY FOR DASHBOARDS
-// ============================================================================
 router.get('/summary', authenticateUser, async (req, res) => {
     try {
         if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });

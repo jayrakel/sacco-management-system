@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     next_of_kin_name character varying(255),
     next_of_kin_phone character varying(20),
     next_of_kin_relation character varying(50),
+    profile_image text, -- Stores Base64 string of profile picture
     
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     must_change_password boolean DEFAULT false,
