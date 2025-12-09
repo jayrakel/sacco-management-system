@@ -1,3 +1,4 @@
+// backend/index.js
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -74,10 +75,11 @@ const initializeSystem = async () => {
         console.log("✅ Database Connected");
 
         console.log("⚙️  Checking Database Schema...");
+        // Auto-fix missing columns safely
         await db.query(`
             DO $$ 
             BEGIN 
-                -- 1. Transactions Fixes
+                -- 1. Fix Transactions Table
                 BEGIN
                     ALTER TABLE transactions ADD COLUMN status VARCHAR(50) DEFAULT 'COMPLETED';
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
@@ -88,7 +90,7 @@ const initializeSystem = async () => {
                     ALTER TABLE transactions ADD COLUMN checkout_request_id VARCHAR(100);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
 
-                -- 2. Users Fixes (Security & KYC)
+                -- 2. Fix Users Table (Security & KYC)
                 BEGIN
                     ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE;
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
@@ -98,8 +100,6 @@ const initializeSystem = async () => {
                 BEGIN
                     ALTER TABLE users ADD COLUMN verification_token VARCHAR(255);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
-
-                -- 3. KYC Fields
                 BEGIN
                     ALTER TABLE users ADD COLUMN id_number VARCHAR(20);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
@@ -115,20 +115,18 @@ const initializeSystem = async () => {
                 BEGIN
                     ALTER TABLE users ADD COLUMN next_of_kin_relation VARCHAR(50);
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
-
-                -- 4. Profile Image
                 BEGIN
                     ALTER TABLE users ADD COLUMN profile_image TEXT;
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
 
-                -- 5. Deposits Fixes (Fixing "column category does not exist")
+                -- 3. Fix Deposits Table (The cause of your error)
                 BEGIN
                     ALTER TABLE deposits ADD COLUMN category VARCHAR(50) DEFAULT 'DEPOSIT';
                 EXCEPTION WHEN duplicate_column THEN NULL; END;
             END $$;
         `);
 
-        // --- NEW: Custom Contribution Categories Table ---
+        // Create Custom Contribution Categories Table if missing
         await db.query(`
             CREATE TABLE IF NOT EXISTS contribution_categories (
                 id SERIAL PRIMARY KEY,
@@ -140,7 +138,7 @@ const initializeSystem = async () => {
         `);
         console.log("✅ Schema Verified (Columns synced automatically)");
 
-        // Create Admin if missing
+        // Create Default Admin if no users exist
         const result = await db.query("SELECT COUNT(*) FROM users");
         if (parseInt(result.rows[0].count) === 0) {
             console.log("⚠️ No users found. Creating Default Admin...");

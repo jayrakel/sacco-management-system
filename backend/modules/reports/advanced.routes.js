@@ -14,7 +14,7 @@ router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN',
     const reportDate = date ? new Date(date) : new Date();
 
     // Assets
-    // Note: We check both 'type' and 'category' to be safe with legacy data
+    // We check both 'type' and 'category' to handle migration period safely
     const assetsRes = await db.query(
       `SELECT 
         COALESCE(SUM(CASE WHEN (type = 'SHARE_CAPITAL' OR category = 'SHARE_CAPITAL') THEN amount ELSE 0 END), 0) as share_capital,
