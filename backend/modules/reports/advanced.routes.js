@@ -16,22 +16,26 @@ router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN',
     // Assets
     const assetsRes = await db.query(
       `SELECT 
-        SUM(CASE WHEN category = 'SHARE_CAPITAL' THEN amount ELSE 0 END) as share_capital,
-        SUM(CASE WHEN category IN ('DEPOSIT', 'SAVINGS') THEN amount ELSE 0 END) as member_savings,
-        SUM(CASE WHEN type = 'LOAN' AND status = 'ACTIVE' THEN amount ELSE 0 END) as loans_outstanding,
-        (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE category = 'EMERGENCY_FUND') as emergency_fund
+        COALESCE(SUM(CASE WHEN category = 'SHARE_CAPITAL' THEN amount ELSE 0 END), 0) as share_capital,
+        COALESCE(SUM(CASE WHEN category IN ('DEPOSIT', 'SAVINGS') THEN amount ELSE 0 END), 0) as member_savings,
+        COALESCE(SUM(CASE WHEN type = 'LOAN' AND status = 'ACTIVE' THEN amount ELSE 0 END), 0) as loans_outstanding,
+        COALESCE((SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE category = 'EMERGENCY_FUND'), 0) as emergency_fund
        FROM deposits
        WHERE created_at <= $1 AND status = 'COMPLETED'`,
       [reportDate]
     );
 
     const assets = assetsRes.rows[0];
-    const totalAssets = Object.values(assets).reduce((sum, val) => sum + (val ? parseFloat(val) : 0), 0);
+    const share_capital = parseFloat(assets.share_capital) || 0;
+    const member_savings = parseFloat(assets.member_savings) || 0;
+    const loans_outstanding = parseFloat(assets.loans_outstanding) || 0;
+    const emergency_fund = parseFloat(assets.emergency_fund) || 0;
+    const totalAssets = share_capital + member_savings + loans_outstanding + emergency_fund;
 
     // Liabilities
     const liabilitiesRes = await db.query(
       `SELECT 
-        SUM(CASE WHEN status IN ('ACTIVE', 'PENDING') THEN amount ELSE 0 END) as member_liabilities,
+        COALESCE(SUM(CASE WHEN status IN ('ACTIVE', 'PENDING') THEN amount ELSE 0 END), 0) as member_liabilities,
         COUNT(DISTINCT member_id) as member_count
        FROM loans
        WHERE created_at <= $1 AND status IN ('ACTIVE', 'PENDING')`,
@@ -39,7 +43,7 @@ router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN',
     );
 
     const liabilities = liabilitiesRes.rows[0];
-    const totalLiabilities = (liabilities.member_liabilities ? parseFloat(liabilities.member_liabilities) : 0);
+    const totalLiabilities = parseFloat(liabilities.member_liabilities) || 0;
 
     // Equity
     const equity = totalAssets - totalLiabilities;
@@ -48,10 +52,10 @@ router.get('/financial/balance-sheet', authenticateUser, authorizeRoles('ADMIN',
       report_type: 'BALANCE_SHEET',
       report_date: reportDate,
       assets: {
-        share_capital: assets.share_capital || 0,
-        member_savings: assets.member_savings || 0,
-        loans_outstanding: assets.loans_outstanding || 0,
-        emergency_fund: assets.emergency_fund || 0,
+        share_capital: share_capital,
+        member_savings: member_savings,
+        loans_outstanding: loans_outstanding,
+        emergency_fund: emergency_fund,
         total: totalAssets
       },
       liabilities: {
@@ -207,37 +211,38 @@ router.get('/analytics/loans', authenticateUser, authorizeRoles('ADMIN', 'TREASU
   try {
     const loansRes = await db.query(
       `SELECT 
-        COUNT(DISTINCT id) FILTER (WHERE status = 'ACTIVE') as active_loans,
-        COUNT(DISTINCT id) FILTER (WHERE status IN ('ACTIVE', 'COMPLETED')) as total_loans,
-        SUM(amount) FILTER (WHERE status = 'ACTIVE') as total_outstanding,
-        SUM(amount) FILTER (WHERE status = 'COMPLETED') as total_repaid,
-        SUM(amount) FILTER (WHERE status = 'DEFAULT') as total_defaulted,
-        SUM(amount) FILTER (WHERE status = 'OVERDUE') as total_overdue,
-        AVG(amount) as avg_loan_amount,
-        AVG(interest_earned) as avg_interest,
-        AVG(EXTRACT(DAY FROM (expected_repayment_date - application_date))) as avg_term_days
+        COALESCE(COUNT(DISTINCT id) FILTER (WHERE status = 'ACTIVE'), 0) as active_loans,
+        COALESCE(COUNT(DISTINCT id) FILTER (WHERE status IN ('ACTIVE', 'COMPLETED')), 0) as total_loans,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'ACTIVE'), 0) as total_outstanding,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'COMPLETED'), 0) as total_repaid,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'DEFAULT'), 0) as total_defaulted,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as total_overdue,
+        COALESCE(AVG(amount), 0) as avg_loan_amount,
+        COALESCE(AVG(interest_earned), 0) as avg_interest,
+        COALESCE(AVG(EXTRACT(DAY FROM (expected_repayment_date - application_date))), 0) as avg_term_days
        FROM loans
        WHERE created_at >= NOW() - INTERVAL '1 year'`
     );
 
-    const loans = loansRes.rows[0];
-    const totalLoans = parseInt(loans.total_loans) || 0;
-    const defaultedLoans = parseInt(loans.total_defaulted) || 0;
-    const overdueLoans = parseInt(loans.total_overdue) || 0;
+    const loans = loansRes.rows[0] || {};
+    const active_loans = parseInt(loans.active_loans) || 0;
+    const total_loans = parseInt(loans.total_loans) || 0;
+    const total_defaulted = parseInt(loans.total_defaulted) || 0;
+    const total_overdue = parseInt(loans.total_overdue) || 0;
 
     const analytics = {
       summary: {
-        active_loans: loans.active_loans,
-        total_loans: loans.total_loans,
-        total_portfolio: loans.total_outstanding || 0,
-        total_repaid: loans.total_repaid || 0,
-        total_defaulted: loans.total_defaulted || 0,
-        total_overdue: loans.total_overdue || 0
+        active_loans: active_loans,
+        total_loans: total_loans,
+        total_portfolio: parseFloat(loans.total_outstanding) || 0,
+        total_repaid: parseFloat(loans.total_repaid) || 0,
+        total_defaulted: parseFloat(loans.total_defaulted) || 0,
+        total_overdue: parseFloat(loans.total_overdue) || 0
       },
       ratios: {
-        default_rate: totalLoans > 0 ? ((defaultedLoans / totalLoans) * 100).toFixed(2) + '%' : '0%',
-        overdue_rate: totalLoans > 0 ? ((overdueLoans / totalLoans) * 100).toFixed(2) + '%' : '0%',
-        repayment_rate: totalLoans > 0 ? (((totalLoans - defaultedLoans) / totalLoans) * 100).toFixed(2) + '%' : '0%'
+        default_rate: total_loans > 0 ? ((total_defaulted / total_loans) * 100).toFixed(2) + '%' : '0%',
+        overdue_rate: total_loans > 0 ? ((total_overdue / total_loans) * 100).toFixed(2) + '%' : '0%',
+        repayment_rate: total_loans > 0 ? (((total_loans - total_defaulted) / total_loans) * 100).toFixed(2) + '%' : '0%'
       },
       averages: {
         average_loan: loans.avg_loan_amount ? parseFloat(loans.avg_loan_amount).toFixed(2) : 0,
@@ -261,34 +266,36 @@ router.get('/analytics/deposits', authenticateUser, authorizeRoles('ADMIN', 'TRE
   try {
     const depositsRes = await db.query(
       `SELECT 
-        COUNT(DISTINCT member_id) as total_members,
-        COUNT(DISTINCT id) as total_deposits,
-        SUM(amount) as total_amount,
-        AVG(amount) as avg_deposit,
-        SUM(CASE WHEN category = 'SHARE_CAPITAL' THEN amount ELSE 0 END) as share_capital_total,
-        SUM(CASE WHEN category = 'EMERGENCY_FUND' THEN amount ELSE 0 END) as emergency_fund_total,
-        SUM(CASE WHEN category = 'WELFARE' THEN amount ELSE 0 END) as welfare_total
+        COALESCE(COUNT(DISTINCT member_id), 0) as total_members,
+        COALESCE(COUNT(DISTINCT id), 0) as total_deposits,
+        COALESCE(SUM(amount), 0) as total_amount,
+        COALESCE(AVG(amount), 0) as avg_deposit,
+        COALESCE(SUM(CASE WHEN category = 'SHARE_CAPITAL' THEN amount ELSE 0 END), 0) as share_capital_total,
+        COALESCE(SUM(CASE WHEN category = 'EMERGENCY_FUND' THEN amount ELSE 0 END), 0) as emergency_fund_total,
+        COALESCE(SUM(CASE WHEN category = 'WELFARE' THEN amount ELSE 0 END), 0) as welfare_total
        FROM deposits
        WHERE status = 'COMPLETED' AND created_at >= NOW() - INTERVAL '1 year'`
     );
 
-    const deposits = depositsRes.rows[0];
+    const deposits = depositsRes.rows[0] || {};
+    const total_members = parseInt(deposits.total_members) || 0;
+    const total_amount = parseFloat(deposits.total_amount) || 0;
 
     const analytics = {
       summary: {
-        total_members: deposits.total_members,
-        total_deposits: deposits.total_deposits,
-        total_amount: deposits.total_amount || 0
+        total_members: total_members,
+        total_deposits: parseInt(deposits.total_deposits) || 0,
+        total_amount: total_amount
       },
       by_category: {
-        share_capital: deposits.share_capital_total || 0,
-        emergency_fund: deposits.emergency_fund_total || 0,
-        welfare: deposits.welfare_total || 0
+        share_capital: parseFloat(deposits.share_capital_total) || 0,
+        emergency_fund: parseFloat(deposits.emergency_fund_total) || 0,
+        welfare: parseFloat(deposits.welfare_total) || 0
       },
       averages: {
         average_deposit: deposits.avg_deposit ? parseFloat(deposits.avg_deposit).toFixed(2) : 0,
-        average_per_member: deposits.total_members > 0 
-          ? (parseFloat(deposits.total_amount) / deposits.total_members).toFixed(2) 
+        average_per_member: total_members > 0 
+          ? (total_amount / total_members).toFixed(2) 
           : 0
       }
     };

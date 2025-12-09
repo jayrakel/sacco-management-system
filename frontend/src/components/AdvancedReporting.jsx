@@ -3,9 +3,10 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { Download, TrendingUp, Users, DollarSign, AlertCircle, FileText } from 'lucide-react';
 
 export default function AdvancedReporting() {
-  const [activeReport, setActiveReport] = useState('dashboard');
+  const [activeReport, setActiveReport] = useState('balance-sheet');
   const [reportData, setReportData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [dateRange, setDateRange] = useState({
     start_date: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
     end_date: new Date().toISOString().split('T')[0]
@@ -17,6 +18,7 @@ export default function AdvancedReporting() {
   const fetchReport = async (reportType) => {
     try {
       setLoading(true);
+      setError(null);
       let url = '';
 
       switch (reportType) {
@@ -45,24 +47,33 @@ export default function AdvancedReporting() {
           return;
       }
 
+      const token = localStorage.getItem('token');
       const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
       });
 
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log(`Report data for ${reportType}:`, data);
       setReportData(data);
     } catch (error) {
       console.error('Failed to fetch report:', error);
+      setError(error.message);
       setReportData(null);
     } finally {
       setLoading(false);
     }
   };
 
+  // Fetch report when component mounts or when activeReport/dateRange changes
   useEffect(() => {
-    if (activeReport !== 'dashboard') {
-      fetchReport(activeReport);
-    }
+    fetchReport(activeReport);
   }, [activeReport, dateRange]);
 
   const handleExport = async (format) => {
@@ -91,7 +102,7 @@ export default function AdvancedReporting() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-blue-100">Total Assets</p>
-            <p className="text-3xl font-bold">KES {reportData?.assets?.total?.toLocaleString() || '0'}</p>
+            <p className="text-3xl font-bold">KES {reportData?.assets?.total ? parseFloat(reportData.assets.total).toLocaleString() : '0'}</p>
           </div>
           <DollarSign className="w-12 h-12 opacity-20" />
         </div>
@@ -101,7 +112,7 @@ export default function AdvancedReporting() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-green-100">Total Equity</p>
-            <p className="text-3xl font-bold">KES {reportData?.equity?.toLocaleString() || '0'}</p>
+            <p className="text-3xl font-bold">KES {reportData?.equity ? parseFloat(reportData.equity).toLocaleString() : '0'}</p>
           </div>
           <TrendingUp className="w-12 h-12 opacity-20" />
         </div>
@@ -382,7 +393,7 @@ export default function AdvancedReporting() {
       </div>
 
       {/* Date Range Filter */}
-      <div className="bg-white p-4 rounded-lg shadow flex gap-4 items-end">
+      <div className="bg-white p-4 rounded-lg shadow flex gap-4 items-end flex-wrap">
         <div>
           <label className="block text-sm font-medium text-gray-700">From</label>
           <input
@@ -409,6 +420,14 @@ export default function AdvancedReporting() {
           Export CSV
         </button>
       </div>
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-50 p-4 rounded-lg border border-red-200 text-red-700">
+          <p className="font-semibold">Error loading report:</p>
+          <p className="text-sm">{error}</p>
+        </div>
+      )}
 
       {/* Report Content */}
       {loading ? (
