@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Download, TrendingUp, Users, DollarSign, AlertCircle, FileText } from 'lucide-react';
+import { Download, TrendingUp, Users, DollarSign, AlertCircle, FileText, File } from 'lucide-react';
 
 export default function AdvancedReporting() {
   const [activeReport, setActiveReport] = useState('balance-sheet');
@@ -23,7 +23,7 @@ export default function AdvancedReporting() {
 
       switch (reportType) {
         case 'balance-sheet':
-          url = '/api/advanced-reports/financial/balance-sheet';
+          url = `/api/advanced-reports/financial/balance-sheet?date=${dateRange.end_date}`;
           break;
         case 'income-statement':
           url = `/api/advanced-reports/financial/income-statement?start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`;
@@ -60,7 +60,6 @@ export default function AdvancedReporting() {
       }
 
       const data = await response.json();
-      console.log(`Report data for ${reportType}:`, data);
       setReportData(data);
     } catch (error) {
       console.error('Failed to fetch report:', error);
@@ -78,21 +77,26 @@ export default function AdvancedReporting() {
 
   const handleExport = async (format) => {
     try {
+      // Show loading state if needed, or simple toast
       const url = `/api/advanced-reports/export/${activeReport}?format=${format}&start_date=${dateRange.start_date}&end_date=${dateRange.end_date}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
 
-      if (format === 'csv') {
-        const blob = await response.blob();
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `${activeReport}_${new Date().toISOString()}.csv`;
-        a.click();
-      }
+      if (!response.ok) throw new Error('Export failed');
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      const ext = format === 'csv' ? 'csv' : 'pdf';
+      a.download = `${activeReport}_${new Date().toISOString().slice(0,10)}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (error) {
       console.error('Export failed:', error);
+      alert("Failed to download report");
     }
   };
 
@@ -392,33 +396,45 @@ export default function AdvancedReporting() {
         ))}
       </div>
 
-      {/* Date Range Filter */}
-      <div className="bg-white p-4 rounded-lg shadow flex gap-4 items-end flex-wrap">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">From</label>
-          <input
-            type="date"
-            value={dateRange.start_date}
-            onChange={(e) => setDateRange({ ...dateRange, start_date: e.target.value })}
-            className="mt-1 border border-gray-300 rounded-lg p-2"
-          />
+      {/* Date Range Filter & Export Buttons */}
+      <div className="bg-white p-4 rounded-lg shadow flex gap-4 items-end flex-wrap justify-between">
+        <div className="flex gap-4 items-end">
+            <div>
+            <label className="block text-sm font-medium text-gray-700">From</label>
+            <input
+                type="date"
+                value={dateRange.start_date}
+                onChange={(e) => setDateRange({ ...dateRange, start_date: e.target.value })}
+                className="mt-1 border border-gray-300 rounded-lg p-2"
+            />
+            </div>
+            <div>
+            <label className="block text-sm font-medium text-gray-700">To</label>
+            <input
+                type="date"
+                value={dateRange.end_date}
+                onChange={(e) => setDateRange({ ...dateRange, end_date: e.target.value })}
+                className="mt-1 border border-gray-300 rounded-lg p-2"
+            />
+            </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">To</label>
-          <input
-            type="date"
-            value={dateRange.end_date}
-            onChange={(e) => setDateRange({ ...dateRange, end_date: e.target.value })}
-            className="mt-1 border border-gray-300 rounded-lg p-2"
-          />
+
+        <div className="flex gap-2">
+            <button
+                onClick={() => handleExport('csv')}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+            >
+                <Download className="w-4 h-4" />
+                Export CSV
+            </button>
+            <button
+                onClick={() => handleExport('pdf')}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
+            >
+                <File className="w-4 h-4" />
+                Export PDF
+            </button>
         </div>
-        <button
-          onClick={() => handleExport('csv')}
-          className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </button>
       </div>
 
       {/* Error Message */}
