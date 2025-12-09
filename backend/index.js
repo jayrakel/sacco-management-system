@@ -49,7 +49,9 @@ const loanRoutes = require('./modules/loans');
 const paymentRoutes = require('./modules/payments/routes');
 const depositRoutes = require('./modules/deposits/routes');
 const settingsModule = require('./modules/settings/routes');
-const reportRoutes = require('./modules/reports/routes'); 
+const reportRoutes = require('./modules/reports/routes');
+const dividendRoutes = require('./modules/dividends/routes');
+const advancedReportRoutes = require('./modules/reports/advanced.routes');
 
 app.use('/api/auth', loginLimiter, authRoutes); 
 app.use('/api/loan', apiLimiter, loanRoutes); 
@@ -57,6 +59,8 @@ app.use('/api/payments', apiLimiter, paymentRoutes);
 app.use('/api/deposits', apiLimiter, depositRoutes);
 app.use('/api/settings', settingsModule.router); 
 app.use('/api/reports', apiLimiter, reportRoutes);
+app.use('/api/dividends', apiLimiter, dividendRoutes);
+app.use('/api/advanced-reports', apiLimiter, advancedReportRoutes);
 
 app.use((err, req, res, next) => {
     console.error(err.stack);

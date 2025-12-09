@@ -8,6 +8,7 @@ import {
     Printer, PieChart, Loader, Plus, Trash2, List, BookOpen, FolderPlus
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
+import AdvancedReporting from '../components/AdvancedReporting';
 
 // Added 'portfolio' to the TAB_MAP
 const TAB_MAP = { 'voting': 'gov-01', 'finance': 'fin-88', 'members': 'dir-x2', 'settings': 'cfg-99', 'register': 'new-00', 'reports': 'rep-77', 'portfolio': 'prt-55' };
@@ -700,96 +701,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {activeTab === 'reports' && reportData && (
-                    <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-fade-in p-8">
-                        {/* Report Header for Print */}
-                        <div className="mb-8 border-b border-slate-200 pb-6 flex justify-between items-start">
-                            <div className="flex gap-4 items-center">
-                                {logo && <img src={logo} alt="Logo" className="h-20 w-auto object-contain print:block hidden" />}
-                                <div>
-                                    <h1 className="text-3xl font-bold text-slate-800">{saccoName} Financial Report</h1>
-                                    <p className="text-slate-500 mt-1">Generated on: {new Date(reportData.generated_at).toLocaleString()}</p>
-                                </div>
-                            </div>
-                            <button onClick={handlePrintReport} className="bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-700 print:hidden">
-                                <Printer size={18} /> Print Report
-                            </button>
-                        </div>
-
-                        {/* Report Content Grid */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                            {/* Section 1: Financial Health */}
-                            <div>
-                                <h3 className="text-lg font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-4">Financial Position</h3>
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-lg">
-                                        <span className="text-emerald-800 font-medium">Net Member Savings</span>
-                                        <span className="text-xl font-bold text-emerald-700">KES {reportData.financials.net_savings.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                                        <span className="text-blue-800 font-medium">Total Revenue (Fines/Fees)</span>
-                                        <span className="text-xl font-bold text-blue-700">KES {reportData.financials.total_revenue.toLocaleString()}</span>
-                                    </div>
-                                    
-                                    <div className="flex flex-col p-4 bg-indigo-900 rounded-xl text-white shadow-lg">
-                                        <span className="text-indigo-200 text-sm uppercase font-bold tracking-wider">Total Financial Position</span>
-                                        <span className="text-3xl font-extrabold mt-1">KES {reportData.financials.financial_position.toLocaleString()}</span>
-                                        <div className="mt-2 text-xs text-indigo-300 border-t border-indigo-700 pt-2">
-                                            Liquid Cash Available: <span className="text-white font-bold">KES {reportData.financials.cash_on_hand.toLocaleString()}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Section 2: Loan Portfolio */}
-                            <div>
-                                <h3 className="text-lg font-bold text-indigo-900 border-b border-indigo-100 pb-2 mb-4">Active Loan Portfolio</h3>
-                                <div className="space-y-4">
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-600">Active Loans Count</span>
-                                        <span className="font-mono font-bold">{reportData.financials.loan_portfolio.active_loans_count}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-600">Principal Disbursed</span>
-                                        <span className="font-mono font-bold">KES {reportData.financials.loan_portfolio.total_disbursed_active.toLocaleString()}</span>
-                                    </div>
-                                    
-                                    <div className="flex justify-between text-amber-700 bg-amber-50 px-2 py-1 rounded">
-                                        <span className="font-medium">+ Interest Charged</span>
-                                        <span className="font-mono font-bold">KES {reportData.financials.loan_portfolio.total_interest_charged.toLocaleString()}</span>
-                                    </div>
-
-                                    <div className="flex justify-between">
-                                        <span className="text-slate-600">Total Repaid</span>
-                                        <span className="font-mono font-bold text-emerald-600">KES {reportData.financials.loan_portfolio.total_repaid_active.toLocaleString()}</span>
-                                    </div>
-                                    <div className="border-t border-slate-100 pt-3 flex justify-between items-center">
-                                        <span className="text-red-800 font-bold">Outstanding Balance (Risk)</span>
-                                        <span className="text-xl font-bold text-red-600">KES {reportData.financials.loan_portfolio.outstanding_balance.toLocaleString()}</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Section 3: Membership */}
-                        <div className="mt-8 pt-6 border-t border-slate-200">
-                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest">Organization Stats</h3>
-                            <div className="mt-2 text-slate-700">
-                                <span className="text-2xl font-bold">{reportData.membership_count}</span> Active Members registered in the system.
-                            </div>
-                        </div>
-
-                        <div className="mt-8 flex justify-center print:hidden">
-                            <button 
-                                onClick={handleDownloadReport} 
-                                disabled={downloading}
-                                className={`w-full max-w-sm bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-3 shadow-lg transition ${downloading ? 'opacity-75 cursor-not-allowed' : ''}`}
-                            >
-                                {downloading ? <Loader size={20} className="animate-spin"/> : <FileText size={20}/>}
-                                {downloading ? "Generating Master Ledger..." : "Download Full Master Ledger (PDF)"}
-                            </button>
-                        </div>
-                    </div>
+                {activeTab === 'reports' && (
+                    <AdvancedReporting />
                 )}
 
                 {activeTab === 'members' && (

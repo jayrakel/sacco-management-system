@@ -4,9 +4,10 @@ import {
     Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield, List, Settings, FolderPlus, Trash2
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
+import AdvancedReporting from '../components/AdvancedReporting';
 
 export default function TreasurerDashboard({ user, onLogout }) {
-    // Main Tabs: 'queue', 'verification', 'finance', 'portfolio'
+    // Main Tabs: 'queue', 'verification', 'finance', 'portfolio', 'reports'
     const [activeTab, setActiveTab] = useState('queue'); 
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
@@ -275,6 +276,12 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             Financial Records
                         </button>
                         <button 
+                            onClick={() => setActiveTab('reports')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'reports' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <PieChart size={16}/> Advanced Reports
+                        </button>
+                        <button 
                             onClick={() => setActiveTab('settings')} 
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
@@ -529,6 +536,11 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             </table>
                         </div>
                     </div>
+                )}
+
+                {/* ADVANCED REPORTS TAB */}
+                {activeTab === 'reports' && (
+                    <AdvancedReporting />
                 )}
 
                 {/* CATEGORY MANAGEMENT TAB */}

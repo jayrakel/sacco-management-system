@@ -14,7 +14,7 @@ const authenticateUser = (req, res, next) => {
     });
 };
 
-// ... requireRole remains unchanged ...
+// 2. Authorize by Role (Single Role)
 const requireRole = (role) => {
     return (req, res, next) => {
         if (req.user.role !== role) {
@@ -24,4 +24,14 @@ const requireRole = (role) => {
     };
 };
 
-module.exports = { authenticateUser, requireRole };
+// 3. Authorize by Multiple Roles
+const authorizeRoles = (...allowedRoles) => {
+    return (req, res, next) => {
+        if (!allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({ error: "Access Denied: Insufficient Permissions" });
+        }
+        next();
+    };
+};
+
+module.exports = { authenticateUser, requireRole, authorizeRoles };
