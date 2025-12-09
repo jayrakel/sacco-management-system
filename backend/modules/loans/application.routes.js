@@ -18,12 +18,32 @@ router.get('/status', async (req, res) => {
             [req.user.id]
         );
 
-        if (result.rows.length === 0) return res.json({ status: 'NO_APP' });
+        // --- NEW: CHECK ELIGIBILITY ---
+        const minSavingsVal = await getSetting('min_savings_for_loan');
+        const minSavings = parseFloat(minSavingsVal) || 5000;
+
+        const savingsRes = await db.query(
+            "SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE user_id = $1 AND status = 'COMPLETED' AND type = 'DEPOSIT'",
+            [req.user.id]
+        );
+        const currentSavings = parseFloat(savingsRes.rows[0].total);
+
+        // Determine if they can apply (if no active loan exists)
+        const eligibility = {
+            eligible: currentSavings >= minSavings,
+            min_savings: minSavings,
+            current_savings: currentSavings,
+            message: currentSavings >= minSavings ? "Eligible" : `Insufficient savings. Reach KES ${minSavings.toLocaleString()} to apply.`
+        };
+
+        if (result.rows.length === 0) {
+            return res.json({ status: 'NO_APP', eligibility });
+        }
         
         const loan = result.rows[0];
+        loan.eligibility = eligibility; // Attach to existing loan response too
 
         // --- SMART FIX: AUTO-RECONCILE PAYMENTS ---
-        // If status is 'FEE_PENDING', check if a manual payment exists but wasn't linked.
         if (loan.status === 'FEE_PENDING') {
             const paymentCheck = await db.query(
                 `SELECT reference_code, amount 
@@ -35,8 +55,6 @@ router.get('/status', async (req, res) => {
 
             if (paymentCheck.rows.length > 0) {
                 const tx = paymentCheck.rows[0];
-                
-                // Verify this transaction hasn't been used by another application
                 const usageCheck = await db.query(
                     "SELECT id FROM loan_applications WHERE fee_transaction_ref = $1", 
                     [tx.reference_code]
@@ -44,25 +62,20 @@ router.get('/status', async (req, res) => {
 
                 if (usageCheck.rows.length === 0) {
                     console.log(`[Auto-Fix] Linking orphan payment ${tx.reference_code} to Loan #${loan.id}`);
-                    
-                    // 1. Update the database
                     await db.query(
                         `UPDATE loan_applications 
                          SET status='FEE_PAID', fee_transaction_ref=$1, fee_amount=$2 
                          WHERE id=$3`,
                         [tx.reference_code, tx.amount, loan.id]
                     );
-
-                    // 2. Update the local object so the User sees the fix immediately
                     loan.status = 'FEE_PAID';
                     loan.fee_transaction_ref = tx.reference_code;
                     loan.fee_amount = parseFloat(tx.amount);
                 }
             }
         }
-        // -------------------------------------------
 
-        // Parse Numbers to ensure math works
+        // Parse Numbers
         loan.amount_requested = parseFloat(loan.amount_requested || 0);
         loan.amount_repaid = parseFloat(loan.amount_repaid || 0);
         loan.total_due = parseFloat(loan.total_due || 0);
@@ -80,40 +93,29 @@ router.get('/status', async (req, res) => {
         };
 
         if (loan.status === 'ACTIVE' && loan.disbursed_at && loan.total_due > 0) {
-            // --- DYNAMIC SETTING: GRACE PERIOD ---
             const graceVal = await getSetting('loan_grace_period_weeks');
-            const graceWeeks = parseInt(graceVal) || 4; // Default to 4 weeks if setting missing
+            const graceWeeks = parseInt(graceVal) || 4; 
 
             const now = new Date();
             const start = new Date(loan.disbursed_at);
             const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
             
-            // Calculate Weekly Installment Amount
             const weeklyAmount = loan.total_due / loan.repayment_weeks;
-
-            // Calculate Raw Time Passed (Total weeks since money entered account)
             const diffMs = now - start;
             const rawWeeksPassed = Math.floor(diffMs / oneWeekMs);
-            
-            // --- CORE LOGIC: EFFECTIVE WEEKS ---
-            // We subtract the grace period from the raw weeks.
             const effectiveWeeksPassed = rawWeeksPassed - graceWeeks;
 
             let installmentsDue = 0;
             let statusText = 'ON TRACK';
 
             if (effectiveWeeksPassed < 0) {
-                // We are IN the grace period
                 installmentsDue = 0;
                 statusText = 'GRACE PERIOD';
             } else {
-                // Grace period over, schedule is active
                 installmentsDue = Math.min(effectiveWeeksPassed + 1, loan.repayment_weeks);
             }
             
             const amountExpectedSoFar = installmentsDue * weeklyAmount;
-            
-            // Running Balance (Negative means arrears)
             const runningBalance = loan.amount_repaid - amountExpectedSoFar;
 
             if (statusText !== 'GRACE PERIOD') {
@@ -137,15 +139,31 @@ router.get('/status', async (req, res) => {
     }
 });
 
-// 2. START APPLICATION (With Dynamic Processing Fee)
+// 2. START APPLICATION (With Dynamic Processing Fee & ELIGIBILITY CHECK)
 router.post('/init', async (req, res) => {
     try {
         const activeCheck = await db.query("SELECT id FROM loan_applications WHERE user_id = $1 AND status NOT IN ('REJECTED', 'COMPLETED') LIMIT 1", [req.user.id]);
         if(activeCheck.rows.length > 0) return res.status(400).json({ error: "Active application exists" });
         
-        // --- DYNAMIC SETTING: PROCESSING FEE ---
+        // --- NEW: Enforce Eligibility Check ---
+        const minSavingsVal = await getSetting('min_savings_for_loan');
+        const minSavings = parseFloat(minSavingsVal) || 5000;
+
+        const savingsRes = await db.query(
+            "SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE user_id = $1 AND status = 'COMPLETED' AND type = 'DEPOSIT'",
+            [req.user.id]
+        );
+        const currentSavings = parseFloat(savingsRes.rows[0].total);
+
+        if (currentSavings < minSavings) {
+            return res.status(400).json({ 
+                error: `Not Eligible: You need at least KES ${minSavings.toLocaleString()} in savings to apply.` 
+            });
+        }
+        // --------------------------------------
+
         const feeVal = await getSetting('loan_processing_fee');
-        const processingFee = parseFloat(feeVal) || 500; // Default fallback
+        const processingFee = parseFloat(feeVal) || 500; 
 
         const result = await db.query("INSERT INTO loan_applications (user_id, status, fee_amount) VALUES ($1, 'FEE_PENDING', $2) RETURNING *", [req.user.id, processingFee]);
         res.json(result.rows[0]);
@@ -162,9 +180,8 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
         
         const savingsRes = await db.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1 AND status = 'COMPLETED'", [req.user.id]);
         
-        // --- DYNAMIC SETTING: LOAN MULTIPLIER ---
         const multiplierVal = await getSetting('loan_multiplier');
-        const multiplier = parseFloat(multiplierVal) || 3; // Default 3x
+        const multiplier = parseFloat(multiplierVal) || 3; 
         
         const totalSavings = parseFloat(savingsRes.rows[0].total || 0);
         const maxLimit = totalSavings * multiplier;
@@ -184,9 +201,8 @@ router.post('/submit', validate(loanSubmitSchema), async (req, res) => {
 router.post('/final-submit', async (req, res) => {
     const { loanAppId } = req.body;
     try {
-        // --- DYNAMIC SETTING: MIN GUARANTORS ---
         const settingVal = await getSetting('min_guarantors');
-        const minGuarantors = parseInt(settingVal) || 2; // Default 2
+        const minGuarantors = parseInt(settingVal) || 2; 
 
         const guarantors = await db.query("SELECT COUNT(*) FROM loan_guarantors WHERE loan_application_id=$1 AND status='ACCEPTED'", [loanAppId]);
         const acceptedCount = parseInt(guarantors.rows[0].count);
@@ -199,7 +215,6 @@ router.post('/final-submit', async (req, res) => {
 
         await db.query("UPDATE loan_applications SET status='SUBMITTED' WHERE id=$1", [loanAppId]);
         
-        // Notify Secretaries
         const secretaries = await db.query("SELECT id FROM users WHERE role='SECRETARY'");
         await Promise.all(secretaries.rows.map(s => notifyUser(s.id, `📝 Loan #${loanAppId} ready for review.`)));
         

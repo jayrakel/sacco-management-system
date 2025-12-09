@@ -3,24 +3,16 @@ import { useNavigate } from "react-router-dom";
 import api from "../api";
 import {
   Users,
-  Gavel,
-  CheckCircle,
   UserPlus,
   Search,
   Shield,
-  FileText,
-  DollarSign,
-  TrendingUp,
   Settings,
-  ToggleLeft,
-  ToggleRight,
   Upload,
   Image as ImageIcon,
   Edit2,
   Save,
   X,
   Trash2,
-  Plus, // Added Icons
 } from "lucide-react";
 import DashboardHeader from "../components/DashboardHeader";
 
@@ -29,7 +21,6 @@ export default function AdminDashboard({ user, onLogout }) {
 
   const [users, setUsers] = useState([]);
   const [settings, setSettings] = useState([]);
-  const [paymentChannels, setPaymentChannels] = useState([]); // NEW: Channels State
   const [searchTerm, setSearchTerm] = useState("");
 
   const [editingUser, setEditingUser] = useState(null);
@@ -79,13 +70,6 @@ export default function AdminDashboard({ user, onLogout }) {
         } else if (activeTab === "settings") {
           const res = await api.get("/api/settings");
           setSettings(res.data);
-
-          // NEW: Load Payment Channels
-          const channels = res.data.find(
-            (s) => s.setting_key === "payment_channels"
-          );
-          if (channels)
-            setPaymentChannels(JSON.parse(channels.setting_value || "[]"));
         }
       } catch (err) {
         console.error(err);
@@ -151,8 +135,6 @@ export default function AdminDashboard({ user, onLogout }) {
     setLoading(true);
     try {
       await api.delete(`/api/auth/admin/delete/${userId}`);
-
-      // Remove from local list immediately
       setUsers((prev) => prev.filter((u) => u.id !== userId));
       alert("User deleted successfully.");
     } catch (err) {
@@ -185,41 +167,9 @@ export default function AdminDashboard({ user, onLogout }) {
     }
   };
 
-  // NEW: Manage Payment Channels
-  const addChannel = () => {
-    const newChannels = [
-      ...paymentChannels,
-      {
-        type: "BANK",
-        name: "New Bank",
-        account: "000000",
-        instructions: "Ref Code",
-      },
-    ];
-    setPaymentChannels(newChannels);
-    handleSettingUpdate("payment_channels", JSON.stringify(newChannels));
-  };
-
-  const updateChannel = (index, field, value) => {
-    const updated = [...paymentChannels];
-    updated[index][field] = value;
-    setPaymentChannels(updated);
-  };
-
-  const saveChannels = () => {
-    handleSettingUpdate("payment_channels", JSON.stringify(paymentChannels));
-    alert("Payment channels saved!");
-  };
-
-  const removeChannel = (index) => {
-    if (!window.confirm("Remove this payment method?")) return;
-    const updated = paymentChannels.filter((_, i) => i !== index);
-    setPaymentChannels(updated);
-    handleSettingUpdate("payment_channels", JSON.stringify(updated));
-  };
-
   const getSettingValue = (key) =>
     settings.find((x) => x.setting_key === key)?.setting_value || "";
+    
   const handleFileUpload = (key, e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -266,7 +216,7 @@ export default function AdminDashboard({ user, onLogout }) {
               {renderTabButton("users", "Members", <Users size={16} />)}
               {renderTabButton(
                 "settings",
-                "Configuration",
+                "System Branding",
                 <Settings size={16} />
               )}
               {renderTabButton("register", "New User", <UserPlus size={16} />)}
@@ -322,7 +272,6 @@ export default function AdminDashboard({ user, onLogout }) {
                           {u.phone_number}
                         </span>
                       </td>
-                      {/* Inside the map loop for users */}
                       <td className="px-6 py-3 flex gap-2">
                         <button
                           onClick={() => startEditUser(u)}
@@ -330,8 +279,6 @@ export default function AdminDashboard({ user, onLogout }) {
                         >
                           <Edit2 size={12} /> Edit
                         </button>
-
-                        {/* NEW: DELETE BUTTON */}
                         <button
                           onClick={() => handleDeleteUser(u.id)}
                           className="flex items-center gap-1 text-red-600 hover:text-red-800 font-bold text-xs bg-red-50 px-3 py-1.5 rounded-lg hover:bg-red-100 transition"
@@ -431,95 +378,6 @@ export default function AdminDashboard({ user, onLogout }) {
                     </button>
                   </div>
                 </div>
-              </div>
-            </div>
-
-            {/* --- NEW: PAYMENT DROP ACCOUNTS SECTION --- */}
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6">
-              <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-2">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="text-emerald-600" size={20} />{" "}
-                  <h3 className="text-lg font-bold text-slate-800">
-                    Deposit / Drop Accounts
-                  </h3>
-                </div>
-                <button
-                  onClick={addChannel}
-                  className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-700"
-                >
-                  <Plus size={14} /> Add Account
-                </button>
-              </div>
-              <div className="space-y-4">
-                {paymentChannels.length === 0 && (
-                  <p className="text-slate-400 text-sm italic">
-                    No accounts configured. Members won't know where to send
-                    money.
-                  </p>
-                )}
-                {paymentChannels.map((ch, idx) => (
-                  <div
-                    key={idx}
-                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col gap-3"
-                  >
-                    <div className="flex justify-between items-center">
-                      <select
-                        className="bg-white border border-slate-300 rounded-lg text-sm p-1 font-bold"
-                        value={ch.type}
-                        onChange={(e) =>
-                          updateChannel(idx, "type", e.target.value)
-                        }
-                      >
-                        <option value="BANK">Bank Account</option>
-                        <option value="PAYPAL">PayPal</option>
-                        <option value="MPESA">M-Pesa Paybill</option>
-                      </select>
-                      <button
-                        onClick={() => removeChannel(idx)}
-                        className="text-red-500 hover:bg-red-50 p-1 rounded"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name (e.g. Equity Bank)"
-                        className="border p-2 rounded-lg text-sm"
-                        value={ch.name}
-                        onChange={(e) =>
-                          updateChannel(idx, "name", e.target.value)
-                        }
-                      />
-                      <input
-                        type="text"
-                        placeholder="Account No / Email"
-                        className="border p-2 rounded-lg text-sm font-mono"
-                        value={ch.account}
-                        onChange={(e) =>
-                          updateChannel(idx, "account", e.target.value)
-                        }
-                      />
-                      <input
-                        type="text"
-                        placeholder="Instructions (e.g. Use ID as Ref)"
-                        className="border p-2 rounded-lg text-sm"
-                        value={ch.instructions}
-                        onChange={(e) =>
-                          updateChannel(idx, "instructions", e.target.value)
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-                {paymentChannels.length > 0 && (
-                  <button
-                    onClick={saveChannels}
-                    className="w-full bg-slate-800 text-white py-2 rounded-lg font-bold text-sm hover:bg-slate-900 transition"
-                  >
-                    Save Changes
-                  </button>
-                )}
               </div>
             </div>
           </div>

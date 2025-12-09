@@ -1,30 +1,19 @@
-// frontend/src/pages/TreasurerDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
-    Wallet, 
-    TrendingUp, 
-    Send, 
-    CheckCircle, 
-    PieChart,
-    FileText,
-    AlertCircle,
-    FileWarning,
-    Briefcase,
-    DollarSign,
-    Users,
-    Clock
+    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function TreasurerDashboard({ user, onLogout }) {
-    // Main Tabs: 'queue' (Disbursements) or 'finance' (Records)
+    // Main Tabs: 'queue', 'verification', 'finance'
     const [activeTab, setActiveTab] = useState('queue'); 
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
     // Data State
     const [queue, setQueue] = useState([]);
     const [stats, setStats] = useState({ availableFunds: 0, totalDisbursed: 0 });
+    const [pendingDeposits, setPendingDeposits] = useState([]); // NEW: For Verification
     
     // Financial Records
     const [deposits, setDeposits] = useState([]);
@@ -36,16 +25,17 @@ export default function TreasurerDashboard({ user, onLogout }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // 1. Fetch Queue & Basic Treasury Stats
-                const [qRes, sRes] = await Promise.all([
+                // 1. Fetch Queue, Basic Stats & Pending Deposits
+                const [qRes, sRes, depPendingRes] = await Promise.all([
                     api.get('/api/loan/treasury/queue'),
-                    api.get('/api/loan/treasury/stats')
+                    api.get('/api/loan/treasury/stats'),
+                    api.get('/api/payments/admin/deposits/pending') // NEW ENDPOINT
                 ]);
                 setQueue(qRes.data);
                 setStats(sRes.data);
+                setPendingDeposits(depPendingRes.data);
 
                 // 2. Fetch Full Financial History
-                // Always fetching this to ensure data is ready when switching tabs
                 const [resDeposits, resTrans] = await Promise.all([
                     api.get('/api/deposits/admin/all'),
                     api.get('/api/payments/admin/all')
@@ -60,7 +50,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         fetchData();
     }, [refreshKey]);
 
-    // --- CALCULATIONS FOR FINANCE TAB (Restored Original Logic) ---
+    // --- CALCULATIONS FOR FINANCE TAB ---
     const safeSum = (arr) => {
         if (!Array.isArray(arr)) return 0;
         return arr.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
@@ -112,7 +102,21 @@ export default function TreasurerDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    // --- HELPER COMPONENT (Restored) ---
+    // NEW: Handle Deposit Approval
+    const handleDepositDecision = async (depositId, decision) => {
+        if(!window.confirm(`${decision} this deposit?`)) return;
+        setLoading(true);
+        try {
+            await api.post('/api/payments/admin/deposits/review', { depositId, decision });
+            alert(`Deposit ${decision}!`);
+            setRefreshKey(k=>k+1);
+        } catch (e) { 
+            alert("Failed to update status"); 
+        }
+        setLoading(false);
+    };
+
+    // --- HELPER COMPONENT ---
     const FinanceCard = ({ title, amount, icon, activeId, colorClass }) => (
         <div 
             onClick={() => setFinanceSubTab(activeId)}
@@ -131,7 +135,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
         </div>
     );
 
-    // --- TABLE ROWS RENDERER (Restored) ---
+    // --- TABLE ROWS RENDERER ---
     const renderFinanceTableRows = () => {
         let data = [];
         let typeLabel = '';
@@ -198,7 +202,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
         ));
     };
 
-    // Queue Calculations for Redesigned Tab
     const totalPendingPayouts = queue.reduce((acc, item) => acc + parseFloat(item.amount_requested), 0);
     const liquidityStatus = stats.availableFunds >= totalPendingPayouts ? 'healthy' : 'critical';
 
@@ -215,7 +218,13 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             onClick={() => setActiveTab('queue')} 
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'queue' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            Disbursement Queue {queue.length > 0 && <span className="ml-1 bg-white/20 px-1.5 rounded text-xs">{queue.length}</span>}
+                            Disbursements {queue.length > 0 && <span className="ml-1 bg-indigo-500 text-white px-1.5 rounded-full text-xs">{queue.length}</span>}
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('verification')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'verification' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            Verify Deposits {pendingDeposits.length > 0 && <span className="ml-1 bg-red-500 text-white text-[10px] px-1.5 rounded-full">{pendingDeposits.length}</span>}
                         </button>
                         <button 
                             onClick={() => setActiveTab('finance')} 
@@ -226,7 +235,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     </div>
                 </div>
 
-                {/* 1. REDESIGNED DISBURSEMENT QUEUE */}
+                {/* 1. DISBURSEMENT QUEUE */}
                 {activeTab === 'queue' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Queue Stats Cards */}
@@ -256,9 +265,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                         <p className="text-red-500 text-xs mt-2 font-bold flex items-center gap-1">
                                             <AlertCircle size={12} /> Liquidity Low! Cannot clear queue.
                                         </p>
-                                    )}
-                                    {liquidityStatus === 'healthy' && (
-                                        <p className="text-slate-400 text-xs mt-2">Total approved awaiting transfer</p>
                                     )}
                                 </div>
                             </div>
@@ -340,10 +346,42 @@ export default function TreasurerDashboard({ user, onLogout }) {
                     </div>
                 )}
 
-                {/* 2. ORIGINAL FINANCIAL OVERVIEW (Restored) */}
+                {/* 2. VERIFICATION TAB (NEW) */}
+                {activeTab === 'verification' && (
+                    <div className="space-y-6 animate-fade-in">
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-amber-50">
+                                <h3 className="font-bold text-amber-800 flex items-center gap-2"><Shield size={18}/> Pending Deposit Verifications</h3>
+                            </div>
+                            {pendingDeposits.length === 0 ? <div className="p-12 text-center text-slate-400">All deposits have been processed.</div> : 
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                                        <tr><th className="px-6 py-3">Date</th><th className="px-6 py-3">Member</th><th className="px-6 py-3">Reference</th><th className="px-6 py-3">Amount</th><th className="px-6 py-3 text-right">Decision</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {pendingDeposits.map(d => (
+                                            <tr key={d.id} className="hover:bg-amber-50/50">
+                                                <td className="px-6 py-4 text-slate-500 text-xs">{new Date(d.created_at).toLocaleDateString()}</td>
+                                                <td className="px-6 py-4 font-bold text-slate-700">{d.full_name}</td>
+                                                <td className="px-6 py-4 font-mono text-xs">{d.transaction_ref}<br/><span className="text-[10px] text-slate-400">{d.description}</span></td>
+                                                <td className="px-6 py-4 font-bold text-emerald-600">KES {parseFloat(d.amount).toLocaleString()}</td>
+                                                <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                                    <button onClick={()=>handleDepositDecision(d.id, 'COMPLETED')} disabled={loading} className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-sm flex items-center gap-1"><CheckCircle size={14}/> Approve</button>
+                                                    <button onClick={()=>handleDepositDecision(d.id, 'REJECTED')} disabled={loading} className="bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-200 border border-red-200">Reject</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>}
+                        </div>
+                    </div>
+                )}
+
+                {/* 3. FINANCE RECORDS */}
                 {activeTab === 'finance' && (
                     <div className="space-y-6 animate-fade-in">
-                        
                         {/* Main Header */}
                         <div className="bg-gradient-to-r from-indigo-900 to-purple-900 text-white rounded-2xl p-8 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
                             <div>

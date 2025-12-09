@@ -7,22 +7,25 @@ const { getSetting } = require('../settings/routes');
 const Joi = require('joi');
 const axios = require('axios');
 
-// Validation for Manual Recording
+// Validation for Manual Recording (Admin)
 const recordTransactionSchema = Joi.object({
     userId: Joi.number().required(),
-    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT', 'LOAN_FORM_FEE', 'FEE_PAYMENT').required(),
+    type: Joi.string().valid('REGISTRATION_FEE', 'FINE', 'PENALTY', 'DEPOSIT', 'SHARE_CAPITAL', 'LOAN_FORM_FEE', 'FEE_PAYMENT').required(),
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
     reference: Joi.string().optional().allow('', null) 
 });
 
-// --- MPESA UTILS ---
+// ==========================================
+//  MPESA UTILITIES
+// ==========================================
 const getMpesaToken = async (req, res, next) => {
     try {
         const consumer = process.env.MPESA_CONSUMER_KEY;
         const secret = process.env.MPESA_CONSUMER_SECRET;
-        const auth = Buffer.from(`${consumer}:${secret}`).toString('base64');
+        if (!consumer || !secret) return res.status(500).json({ error: "Server Config Error: Missing MPESA Keys" });
 
+        const auth = Buffer.from(`${consumer}:${secret}`).toString('base64');
         const response = await axios.get(
             'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
             { headers: { Authorization: `Basic ${auth}` } }
@@ -30,8 +33,8 @@ const getMpesaToken = async (req, res, next) => {
         req.mpesaToken = response.data.access_token;
         next();
     } catch (err) {
-        console.error("M-Pesa Token Error:", err.response?.data || err.message);
-        res.status(500).json({ error: "Failed to connect to payment gateway" });
+        console.error("M-Pesa Token Error:", err.message);
+        res.status(500).json({ error: "Payment Gateway Error" });
     }
 };
 
@@ -45,20 +48,114 @@ const generatePassword = () => {
         ("0" + date.getHours()).slice(-2) +
         ("0" + date.getMinutes()).slice(-2) +
         ("0" + date.getSeconds()).slice(-2);
-    
     const password = Buffer.from(shortCode + passkey + timestamp).toString('base64');
     return { password, timestamp };
 };
 
-// --- MPESA STK PUSH ---
+// ==========================================
+//  1. EXTERNAL WEBHOOK (THE "REAL" LISTENER)
+// ==========================================
+router.post('/webhook/receive', async (req, res) => {
+    const { reference, amount, method, sender } = req.body;
+
+    if (!reference || !amount) return res.status(400).json({ error: "Missing data" });
+
+    try {
+        const check = await db.query("SELECT id FROM transactions WHERE reference_code = $1", [reference]);
+        if (check.rows.length > 0) return res.json({ message: "Already recorded" });
+
+        await db.query(
+            `INSERT INTO transactions (type, amount, status, reference_code, description) 
+             VALUES ('DEPOSIT', $1, 'UNCLAIMED', $2, $3)`,
+            [amount, reference, `Incoming from ${method || 'External'} (${sender || 'Unknown'})`]
+        );
+
+        console.log(`[Webhook] Received ${amount} with Ref ${reference}. Marked as UNCLAIMED.`);
+        res.json({ success: true, message: "Transaction received" });
+
+    } catch (err) {
+        console.error("Webhook Error:", err);
+        res.status(500).json({ error: "Server Error" });
+    }
+});
+
+// ==========================================
+//  2. MEMBER CLAIMING (DIRECT PAYBILL)
+// ==========================================
+router.post('/mpesa/manual', authenticateUser, async (req, res) => {
+    const { reference } = req.body;
+    
+    if (!reference) return res.status(400).json({ error: "Reference Code is required." });
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const check = await client.query(
+            "SELECT id, amount, status FROM transactions WHERE reference_code = $1", 
+            [reference]
+        );
+
+        if (check.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: "Transaction not found. Please wait for the bank to process it or check the code." });
+        }
+
+        const tx = check.rows[0];
+
+        if (tx.status === 'COMPLETED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: "This code has already been used." });
+        }
+        
+        if (tx.status !== 'UNCLAIMED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: `Cannot claim transaction. Current status: ${tx.status}` });
+        }
+
+        await client.query(
+            "UPDATE transactions SET user_id = $1, status = 'COMPLETED', description = $2 WHERE id = $3",
+            [req.user.id, `Direct Deposit Claimed: ${reference}`, tx.id]
+        );
+
+        await client.query(
+            `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
+             VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
+            [req.user.id, tx.amount, reference]
+        );
+
+        await client.query('COMMIT');
+        res.json({ 
+            success: true, 
+            message: `Success! KES ${parseFloat(tx.amount).toLocaleString()} added to your savings.` 
+        });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error("Claim Error:", err);
+        res.status(500).json({ error: "Verification failed." });
+    } finally {
+        client.release();
+    }
+});
+
+// ==========================================
+//  3. STK PUSH (AUTOMATED)
+// ==========================================
 router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res) => {
     const { amount, phoneNumber, type } = req.body; 
     let formattedPhone = phoneNumber.startsWith('0') ? '254' + phoneNumber.slice(1) : phoneNumber;
-    if (!formattedPhone.startsWith('254')) return res.status(400).json({ error: "Invalid Phone Number format. Use 254..." });
+    
+    if (!formattedPhone.startsWith('254')) return res.status(400).json({ error: "Invalid Phone. Use 254..." });
 
+    // RESTORED: No longer blocking localhost!
+    const callbackUrl = process.env.MPESA_CALLBACK_URL || 'http://localhost:5000/api/payments/mpesa/callback';
+    
     const { password, timestamp } = generatePassword();
 
     try {
+        console.log(`[STK Push] Initiating... Phone: ${formattedPhone}, Amount: ${amount}, URL: ${callbackUrl}`);
+
         const stkRes = await axios.post(
             'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
             {
@@ -70,9 +167,9 @@ router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res)
                 PartyA: formattedPhone,
                 PartyB: process.env.MPESA_SHORTCODE,
                 PhoneNumber: formattedPhone,
-                CallBackURL: process.env.MPESA_CALLBACK_URL,
+                CallBackURL: callbackUrl,
                 AccountReference: "SecureSacco",
-                TransactionDesc: type || "Payment"
+                TransactionDesc: (type || "Payment").substring(0, 13) 
             },
             { headers: { Authorization: `Bearer ${req.mpesaToken}` } }
         );
@@ -90,45 +187,71 @@ router.post('/mpesa/stk-push', authenticateUser, getMpesaToken, async (req, res)
         res.json({ success: true, message: "STK Push sent to phone", checkoutReqId });
 
     } catch (err) {
-        console.error("STK Push Error:", err.response?.data || err.message);
-        res.status(500).json({ error: "STK Push Failed" });
+        const errorData = err.response?.data || {};
+        console.error("STK Push Failed Details:", errorData);
+        
+        let msg = "STK Push Failed.";
+        
+        // Even if Safaricom complains about the URL (500.001.1001), we can sometimes ignore it
+        // BUT usually, 500.001.1001 means they REJECTED the request entirely.
+        // If it worked before, your callback URL was likely valid format (http://...) even if unreachable.
+        
+        if (errorData.errorMessage) msg += ` ${errorData.errorMessage}`;
+        res.status(500).json({ error: msg, details: errorData });
     }
 });
 
-// --- MPESA CALLBACK ---
+// ==========================================
+//  4. MPESA CALLBACK (Manual Trigger Compatible)
+// ==========================================
 router.post('/mpesa/callback', async (req, res) => {
+    console.log("--- M-Pesa Callback Received ---");
     try {
-        const { Body } = req.body;
-        const { stkCallback } = Body;
-        if (!stkCallback) return res.sendStatus(200);
+        // Safe access to body
+        const { Body } = req.body || {};
+        if (!Body || !Body.stkCallback) {
+            console.log("Invalid Body or Verification Ping. Responding 200 OK.");
+            return res.sendStatus(200);
+        }
 
+        const { stkCallback } = Body;
         const checkoutReqId = stkCallback.CheckoutRequestID;
         const resultCode = stkCallback.ResultCode; 
 
+        console.log(`Callback ID: ${checkoutReqId} | Result: ${resultCode}`);
+
         const txCheck = await db.query("SELECT * FROM transactions WHERE checkout_request_id = $1", [checkoutReqId]);
-        if (txCheck.rows.length === 0) return res.sendStatus(200);
+        if (txCheck.rows.length === 0) {
+            console.log("Transaction not found locally.");
+            return res.sendStatus(200);
+        }
         const transaction = txCheck.rows[0];
 
         if (resultCode === 0) {
-            const mpesaReceiptItem = stkCallback.CallbackMetadata.Item.find(i => i.Name === 'MpesaReceiptNumber');
-            const mpesaReceipt = mpesaReceiptItem ? mpesaReceiptItem.Value : `MPESA-${Date.now()}`;
+            // Success
+            const items = stkCallback.CallbackMetadata?.Item || [];
+            const mpesaReceipt = items.find(i => i.Name === 'MpesaReceiptNumber')?.Value || `MPESA-${Date.now()}`;
 
             const client = await db.pool.connect();
             try {
                 await client.query('BEGIN');
                 await client.query(
-                    `UPDATE transactions SET status = 'COMPLETED', reference_code = $1, description = 'M-Pesa Payment Confirmed' WHERE id = $2`,
+                    "UPDATE transactions SET status = 'COMPLETED', reference_code = $1, description = 'STK Confirmed' WHERE id = $2",
                     [mpesaReceipt, transaction.id]
                 );
-
-                if (transaction.type === 'DEPOSIT') {
+                
+                // Only credit if it hasn't been credited yet
+                const depCheck = await client.query("SELECT id FROM deposits WHERE transaction_ref = $1", [mpesaReceipt]);
+                if (depCheck.rows.length === 0 && transaction.type === 'DEPOSIT') {
                     await client.query(
                         `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
                          VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
                         [transaction.user_id, transaction.amount, mpesaReceipt]
                     );
                 }
+                
                 await client.query('COMMIT');
+                console.log(`Transaction ${mpesaReceipt} confirmed.`);
             } catch (sqlErr) {
                 await client.query('ROLLBACK');
                 console.error("Callback SQL Error", sqlErr);
@@ -136,20 +259,23 @@ router.post('/mpesa/callback', async (req, res) => {
                 client.release();
             }
         } else {
+            // Failed/Cancelled
             await db.query("UPDATE transactions SET status = 'FAILED', description = $1 WHERE id = $2", [stkCallback.ResultDesc || 'User Cancelled', transaction.id]);
+            console.log(`Transaction ${transaction.id} failed.`);
         }
         res.sendStatus(200);
     } catch (err) {
         console.error("Callback Error:", err);
-        res.sendStatus(500);
+        res.sendStatus(200);
     }
 });
 
-// --- BANK DEPOSIT (Simulation) ---
+// ==========================================
+//  5. BANK DEPOSIT (MANUAL REVIEW)
+// ==========================================
 router.post('/bank/deposit', authenticateUser, async (req, res) => {
     const { amount, reference, bankName } = req.body;
-    
-    if (!amount || !reference) return res.status(400).json({ error: "Amount and Reference Code are required." });
+    if (!amount || !reference) return res.status(400).json({ error: "Details required" });
 
     const client = await db.pool.connect();
     try {
@@ -158,23 +284,23 @@ router.post('/bank/deposit', authenticateUser, async (req, res) => {
         const refCheck = await client.query("SELECT id FROM transactions WHERE reference_code = $1", [reference]);
         if (refCheck.rows.length > 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: "This Reference Code has already been used." });
+            return res.status(400).json({ error: "Reference Code already used." });
         }
 
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, status, reference_code, description) 
-             VALUES ($1, 'DEPOSIT', $2, 'COMPLETED', $3, $4)`,
-            [req.user.id, amount, reference, `Bank Transfer - ${bankName}`]
+             VALUES ($1, 'DEPOSIT', $2, 'PENDING', $3, $4)`,
+            [req.user.id, amount, reference, `Bank: ${bankName}`]
         );
 
         await client.query(
             `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-             VALUES ($1, 'DEPOSIT', $2, 'COMPLETED')`,
+             VALUES ($1, $2, 'DEPOSIT', $3, 'PENDING')`,
             [req.user.id, amount, reference]
         );
 
         await client.query('COMMIT');
-        res.json({ success: true, message: "Bank deposit recorded successfully." });
+        res.json({ success: true, message: "Bank deposit recorded. Waiting for Treasurer approval." });
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -185,11 +311,12 @@ router.post('/bank/deposit', authenticateUser, async (req, res) => {
     }
 });
 
-// --- PAYPAL DEPOSIT (Simulation) ---
+// ==========================================
+//  6. PAYPAL DEPOSIT (MANUAL REVIEW)
+// ==========================================
 router.post('/paypal/deposit', authenticateUser, async (req, res) => {
     const { amount, reference } = req.body;
-    
-    if (!amount || !reference) return res.status(400).json({ error: "Amount and Transaction ID are required." });
+    if (!amount || !reference) return res.status(400).json({ error: "Details required" });
 
     const client = await db.pool.connect();
     try {
@@ -198,23 +325,23 @@ router.post('/paypal/deposit', authenticateUser, async (req, res) => {
         const refCheck = await client.query("SELECT id FROM transactions WHERE reference_code = $1", [reference]);
         if (refCheck.rows.length > 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: "This Transaction ID has already been used." });
+            return res.status(400).json({ error: "Transaction ID already used." });
         }
 
         await client.query(
             `INSERT INTO transactions (user_id, type, amount, status, reference_code, description) 
-             VALUES ($1, 'DEPOSIT', $2, 'COMPLETED', $3, 'PayPal Transfer')`,
+             VALUES ($1, 'DEPOSIT', $2, 'PENDING', $3, 'PayPal Transfer')`,
             [req.user.id, amount, reference]
         );
 
         await client.query(
             `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-             VALUES ($1, 'DEPOSIT', $2, 'COMPLETED')`,
+             VALUES ($1, $2, 'DEPOSIT', $3, 'PENDING')`,
             [req.user.id, amount, reference]
         );
 
         await client.query('COMMIT');
-        res.json({ success: true, message: "PayPal deposit recorded successfully." });
+        res.json({ success: true, message: "PayPal deposit recorded. Waiting for Treasurer approval." });
 
     } catch (err) {
         await client.query('ROLLBACK');
@@ -225,8 +352,57 @@ router.post('/paypal/deposit', authenticateUser, async (req, res) => {
     }
 });
 
-// ... (Keep pay-fee, repay-loan, admin/record, etc. unchanged) ...
-// 1. PAY LOAN FORM FEE
+// ==========================================
+//  7. TREASURER VERIFICATION
+// ==========================================
+router.get('/admin/deposits/pending', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+    try {
+        const result = await db.query(
+            `SELECT d.id, d.amount, d.transaction_ref, d.type, d.created_at, u.full_name, t.description 
+             FROM deposits d
+             JOIN users u ON d.user_id = u.id
+             LEFT JOIN transactions t ON d.transaction_ref = t.reference_code
+             WHERE d.status = 'PENDING'
+             ORDER BY d.created_at ASC`
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: "Fetch failed" });
+    }
+});
+
+router.post('/admin/deposits/review', authenticateUser, async (req, res) => {
+    if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
+    
+    const { depositId, decision } = req.body; 
+    if (!['COMPLETED', 'REJECTED'].includes(decision)) return res.status(400).json({ error: "Invalid decision" });
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const depRes = await client.query("SELECT transaction_ref FROM deposits WHERE id = $1", [depositId]);
+        if (depRes.rows.length === 0) throw new Error("Deposit not found");
+        const ref = depRes.rows[0].transaction_ref;
+
+        await client.query("UPDATE deposits SET status = $1 WHERE id = $2", [decision, depositId]);
+        await client.query("UPDATE transactions SET status = $1 WHERE reference_code = $2", [decision, ref]);
+
+        await client.query('COMMIT');
+        res.json({ success: true, message: `Deposit ${decision}` });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: "Action failed" });
+    } finally {
+        client.release();
+    }
+});
+
+// ==========================================
+//  8. STANDARD PAYMENT ROUTES
+// ==========================================
 router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, res) => {
     const { loanAppId, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -236,10 +412,7 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
         
         const loanCheck = await client.query("SELECT user_id FROM loan_applications WHERE id=$1", [loanAppId]);
         if (loanCheck.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
-        
-        if (loanCheck.rows[0].user_id !== req.user.id) {
-            return res.status(403).json({ error: "Unauthorized payment" });
-        }
+        if (loanCheck.rows[0].user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized payment" });
 
         const feeVal = await getSetting('loan_processing_fee');
         const feeAmount = parseFloat(feeVal) || 500;
@@ -269,7 +442,6 @@ router.post('/pay-fee', authenticateUser, validate(paymentSchema), async (req, r
     }
 });
 
-// 2. REPAY LOAN
 router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (req, res) => {
     const { loanAppId, amount, mpesaRef } = req.body;
     const client = await db.pool.connect();
@@ -328,7 +500,6 @@ router.post('/repay-loan', authenticateUser, validate(repaymentSchema), async (r
     }
 });
 
-// 3. RECORD MANUAL TRANSACTION
 router.post('/admin/record', authenticateUser, validate(recordTransactionSchema), async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) {
         return res.status(403).json({ error: "Access Denied" });
@@ -351,15 +522,15 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
             [userId, type, amount, reference, description]
         );
 
-        if (type === 'DEPOSIT') {
+        if (type === 'DEPOSIT' || type === 'SHARE_CAPITAL') {
             await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status) 
-                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED')`,
-                [userId, amount, reference]
+                 VALUES ($1, $2, $3, $4, 'COMPLETED')`,
+                [userId, amount, type, reference] 
             );
         } 
         else if (type === 'FINE' || type === 'PENALTY') {
-            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1", [userId]);
+            const savingsRes = await client.query("SELECT SUM(amount) as total FROM deposits WHERE user_id = $1 AND type='DEPOSIT'", [userId]);
             const currentSavings = parseFloat(savingsRes.rows[0].total || 0);
 
             if (currentSavings > 0) {
@@ -405,7 +576,6 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
     }
 });
 
-// 4. COMPLIANCE CHECK
 router.post('/admin/run-weekly-compliance', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
 
@@ -485,7 +655,6 @@ router.post('/admin/run-weekly-compliance', authenticateUser, async (req, res) =
     }
 });
 
-// GET TRANSACTIONS
 router.get('/admin/all', authenticateUser, (req, res, next) => {
     if (['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) next();
     else res.status(403).json({ error: "Access Denied" });

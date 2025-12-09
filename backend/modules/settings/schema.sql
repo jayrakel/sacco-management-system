@@ -13,6 +13,7 @@ INSERT INTO system_settings (setting_key, setting_value, description, category)
 VALUES 
     ('registration_fee', '1500', 'One-time mandatory fee (KES)', 'SACCO'),
     ('min_share_capital', '2000', 'Minimum shares (KES)', 'SACCO'),
+    ('min_savings_for_loan', '5000', 'Min savings to apply for loan', 'SACCO'), -- NEW SETTING
     ('min_weekly_deposit', '250', 'Min saving/week (KES)', 'SACCO'),
     ('loan_interest_rate', '12', 'Annual interest rate (%)', 'SACCO'),
     ('loan_grace_period_weeks', '4', 'Weeks before arrears', 'SACCO'),
@@ -30,8 +31,6 @@ VALUES
     ('sacco_logo', '', 'Logo Base64', 'SYSTEM'),
     ('sacco_favicon', '', 'Favicon Base64', 'SYSTEM'),
     ('sacco_name', 'Secure Sacco', 'Organization Name', 'SYSTEM'),
-    
-    -- NEW: Payment Channels (Drop Accounts)
     ('payment_channels', '[{"type":"BANK","name":"Equity Bank","account":"123-456-789","instructions":"Enter Ref"},{"type":"PAYPAL","name":"PayPal","account":"pay@sacco.com","instructions":"Use transaction ID"}]', 'List of receiving accounts', 'SACCO')
 
 ON CONFLICT (setting_key) 

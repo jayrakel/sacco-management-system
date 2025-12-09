@@ -5,7 +5,7 @@ import {
     Gavel, TrendingUp, Users, Settings, UserPlus, Save, 
     DollarSign, FileText, CheckCircle, AlertCircle, 
     FileWarning, PlusCircle, Calculator, ShieldAlert,
-    Printer, PieChart, Loader 
+    Printer, PieChart, Loader, Plus, Trash2 
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -36,6 +36,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
+    const [paymentChannels, setPaymentChannels] = useState([]); // NEW: Channels State
     
     // Report Data State
     const [reportData, setReportData] = useState(null);
@@ -48,7 +49,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [finePresets, setFinePresets] = useState([]);
 
     // Forms
-    // --- UPDATED STATE: Includes new KYC fields ---
     const [regForm, setRegForm] = useState({ 
         fullName: '', 
         email: '', 
@@ -78,7 +78,9 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 const resSettings = await api.get('/api/settings');
                 if (resSettings.data) {
                     const allSettings = resSettings.data;
-                    setSaccoSettings(allSettings.filter(s => s.category === 'SACCO'));
+                    
+                    // Filter out payment_channels from generic list so we can show custom UI
+                    setSaccoSettings(allSettings.filter(s => s.category === 'SACCO' && s.setting_key !== 'payment_channels'));
                     
                     const logoSetting = allSettings.find(s => s.setting_key === 'sacco_logo');
                     if (logoSetting) setLogo(logoSetting.setting_value);
@@ -88,6 +90,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
                     const regFeeSetting = allSettings.find(s => s.setting_key === 'registration_fee');
                     if (regFeeSetting) setCurrentRegFee(parseFloat(regFeeSetting.setting_value));
+
+                    // NEW: Load Payment Channels
+                    const channels = allSettings.find(s => s.setting_key === 'payment_channels');
+                    if (channels) setPaymentChannels(JSON.parse(channels.setting_value || "[]"));
 
                     const f1h = allSettings.find(s => s.setting_key === 'fine_lateness_1h');
                     const f2h = allSettings.find(s => s.setting_key === 'fine_lateness_2h');
@@ -236,10 +242,45 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const handleSettingUpdate = async (key, val) => {
         try {
             await api.post('/api/settings/update', { key, value: val });
-            alert("Updated.");
             setRefreshKey(k => k + 1);
         } catch (err) { alert("Update failed"); }
     };
+
+    // --- NEW: Manage Payment Channels (Moved from Admin) ---
+    const addChannel = () => {
+        const newChannels = [
+          ...paymentChannels,
+          { type: "BANK", name: "New Bank", account: "000000", instructions: "Ref Code" },
+        ];
+        setPaymentChannels(newChannels);
+        // We use JSON.stringify because the backend expects text
+        api.post('/api/settings/update', { key: "payment_channels", value: JSON.stringify(newChannels) })
+           .then(() => alert("Added new channel slot. Fill details and Save."))
+           .catch(() => alert("Failed to add."));
+    };
+
+    const updateChannel = (index, field, value) => {
+        const updated = [...paymentChannels];
+        updated[index][field] = value;
+        setPaymentChannels(updated);
+    };
+
+    const saveChannels = async () => {
+        try {
+            await api.post('/api/settings/update', { key: "payment_channels", value: JSON.stringify(paymentChannels) });
+            alert("Payment channels saved successfully!");
+        } catch(e) {
+            alert("Failed to save.");
+        }
+    };
+
+    const removeChannel = (index) => {
+        if (!window.confirm("Remove this payment method?")) return;
+        const updated = paymentChannels.filter((_, i) => i !== index);
+        setPaymentChannels(updated);
+        api.post('/api/settings/update', { key: "payment_channels", value: JSON.stringify(updated) });
+    };
+    // -----------------------------------------------------
 
     const handlePrintReport = () => {
         window.print();
@@ -502,7 +543,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         >
                                             <option value="FINE">Fine (Misconduct/Lateness)</option>
                                             <option value="PENALTY">Penalty (Arrears/Breach)</option>
-                                            <option value="DEPOSIT">Manual Deposit</option>
+                                            <option value="DEPOSIT">Manual Deposit (Savings)</option>
+                                            <option value="SHARE_CAPITAL">Share Capital (Equity)</option>
                                             <option value="REGISTRATION_FEE">Registration Fee</option>
                                             <option value="LOAN_FORM_FEE">Loan Form Fee</option>
                                         </select>
@@ -715,27 +757,117 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 )}
 
                 {activeTab === 'settings' && (
-                      <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in print:hidden">
-                        <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                                <Settings className="text-indigo-600" /> Sacco Policy Configuration
-                            </h2>
-                            <p className="text-slate-500 text-sm mt-1">Manage core business rules like interest rates and grace periods.</p>
-                        </div>
-                        <div className="divide-y divide-slate-100">
-                            {saccoSettings.length === 0 ? <p className="p-8 text-center text-slate-400">No Sacco settings found.</p> :
-                            saccoSettings.map((setting) => (
-                                <div key={setting.setting_key} className="p-6 flex flex-col sm:flex-row justify-between items-center gap-4 hover:bg-slate-50">
-                                    <div className="flex-1">
-                                        <h3 className="font-bold text-slate-800 capitalize">{setting.setting_key.replace(/_/g, ' ')}</h3>
-                                        <p className="text-slate-500 text-sm mt-1">{setting.description}</p>
+                      <div className="max-w-4xl mx-auto space-y-6">
+                        {/* --- NEW: PAYMENT DROP ACCOUNTS SECTION --- */}
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden p-6 animate-fade-in print:hidden">
+                            <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-2">
+                                <div className="flex items-center gap-2">
+                                <DollarSign className="text-emerald-600" size={20} />{" "}
+                                <h3 className="text-lg font-bold text-slate-800">
+                                    Deposit / Drop Accounts
+                                </h3>
+                                </div>
+                                <button
+                                onClick={addChannel}
+                                className="flex items-center gap-1 text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-emerald-700"
+                                >
+                                <Plus size={14} /> Add Account
+                                </button>
+                            </div>
+                            <div className="space-y-4">
+                                {paymentChannels.length === 0 && (
+                                <p className="text-slate-400 text-sm italic">
+                                    No accounts configured. Members won't know where to send money.
+                                </p>
+                                )}
+                                {paymentChannels.map((ch, idx) => (
+                                <div
+                                    key={idx}
+                                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col gap-3"
+                                >
+                                    <div className="flex justify-between items-center">
+                                    <select
+                                        className="bg-white border border-slate-300 rounded-lg text-sm p-1 font-bold"
+                                        value={ch.type}
+                                        onChange={(e) =>
+                                        updateChannel(idx, "type", e.target.value)
+                                        }
+                                    >
+                                        <option value="BANK">Bank Account</option>
+                                        <option value="PAYPAL">PayPal</option>
+                                        <option value="MPESA">M-Pesa Paybill</option>
+                                    </select>
+                                    <button
+                                        onClick={() => removeChannel(idx)}
+                                        className="text-red-500 hover:bg-red-50 p-1 rounded"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <input type="text" defaultValue={setting.setting_value} id={`input-${setting.setting_key}`} className="border p-2 rounded-lg w-32 text-right font-mono" />
-                                        <button onClick={() => handleSettingUpdate(setting.setting_key, document.getElementById(`input-${setting.setting_key}`).value)} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700"><Save size={18} /></button>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <input
+                                        type="text"
+                                        placeholder="Name (e.g. Equity Bank)"
+                                        className="border p-2 rounded-lg text-sm"
+                                        value={ch.name}
+                                        onChange={(e) =>
+                                        updateChannel(idx, "name", e.target.value)
+                                        }
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Account No / Email"
+                                        className="border p-2 rounded-lg text-sm font-mono"
+                                        value={ch.account}
+                                        onChange={(e) =>
+                                        updateChannel(idx, "account", e.target.value)
+                                        }
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Instructions (e.g. Use ID as Ref)"
+                                        className="border p-2 rounded-lg text-sm"
+                                        value={ch.instructions}
+                                        onChange={(e) =>
+                                        updateChannel(idx, "instructions", e.target.value)
+                                        }
+                                    />
                                     </div>
                                 </div>
-                            ))}
+                                ))}
+                                {paymentChannels.length > 0 && (
+                                <button
+                                    onClick={saveChannels}
+                                    className="w-full bg-slate-800 text-white py-2 rounded-lg font-bold text-sm hover:bg-slate-900 transition"
+                                >
+                                    Save Changes
+                                </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in print:hidden">
+                            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+                                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                    <Settings className="text-indigo-600" /> Sacco Policy Configuration
+                                </h2>
+                                <p className="text-slate-500 text-sm mt-1">Manage core business rules like interest rates and grace periods.</p>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                                {saccoSettings.length === 0 ? <p className="p-8 text-center text-slate-400">No Sacco settings found.</p> :
+                                saccoSettings.map((setting) => (
+                                    <div key={setting.setting_key} className="p-6 flex flex-col sm:flex-row justify-between items-center gap-4 hover:bg-slate-50">
+                                        <div className="flex-1">
+                                            <h3 className="font-bold text-slate-800 capitalize">{setting.setting_key.replace(/_/g, ' ')}</h3>
+                                            <p className="text-slate-500 text-sm mt-1">{setting.description}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <input type="text" defaultValue={setting.setting_value} id={`input-${setting.setting_key}`} className="border p-2 rounded-lg w-32 text-right font-mono" />
+                                            <button onClick={() => handleSettingUpdate(setting.setting_key, document.getElementById(`input-${setting.setting_key}`).value)} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700"><Save size={18} /></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
                 )}
