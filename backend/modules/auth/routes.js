@@ -2,9 +2,22 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer'); // --- NEW: Import Nodemailer
 const db = require('../../db');
 const { authenticateUser } = require('./middleware');
-const { validate, registerSchema } = require('../common/validation'); // Import validation
+const { validate, registerSchema } = require('../common/validation');
+
+// --- EMAIL CONFIGURATION ---
+const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    secure: true, // Use SSL
+    auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+    }
+});
 
 // REGISTER
 router.post('/register', validate(registerSchema), async (req, res) => {
@@ -14,15 +27,13 @@ router.post('/register', validate(registerSchema), async (req, res) => {
     } = req.body;
 
     try {
-        const userCheck = await db.query("SELECT * FROM users WHERE email = $1 OR phone_number = $2 OR id_number = $3", [email, phoneNumber, idNumber]);
-        if (userCheck.rows.length > 0) {
-            return res.status(400).json({ error: "User, Phone, or ID already exists" });
-        }
+        const userCheck = await db.query("SELECT * FROM users WHERE email = $1 OR phone_number = $2", [email, phoneNumber]);
+        if (userCheck.rows.length > 0) return res.status(400).json({ error: "User, Phone, or Email already exists" });
 
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
+        const verifyToken = crypto.randomBytes(32).toString('hex');
 
-        // Transaction to ensure user + fee match
         const client = await db.pool.connect();
         try {
             await client.query('BEGIN');
@@ -30,10 +41,15 @@ router.post('/register', validate(registerSchema), async (req, res) => {
             const newUser = await client.query(
                 `INSERT INTO users (
                     full_name, email, password_hash, phone_number, role,
-                    id_number, kra_pin, next_of_kin_name, next_of_kin_phone, next_of_kin_relation
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+                    id_number, kra_pin, next_of_kin_name, next_of_kin_phone, next_of_kin_relation,
+                    is_email_verified, verification_token, must_change_password
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, $11, TRUE) 
                 RETURNING id, full_name, email, role`,
-                [fullName, email, hash, phoneNumber, role || 'MEMBER', idNumber, kraPin, nextOfKinName, nextOfKinPhone, nextOfKinRelation]
+                [
+                    fullName, email, hash, phoneNumber, role || 'MEMBER', 
+                    idNumber, kraPin, nextOfKinName, nextOfKinPhone, nextOfKinRelation,
+                    verifyToken
+                ]
             );
 
             if ((role === 'MEMBER' || !role) && paymentRef) {
@@ -44,7 +60,27 @@ router.post('/register', validate(registerSchema), async (req, res) => {
             }
 
             await client.query('COMMIT');
-            res.json({ message: "User registered successfully", user: newUser.rows[0] });
+
+            // --- SEND REAL EMAIL ---
+            const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verifyToken}`;
+            
+            await transporter.sendMail({
+                from: process.env.EMAIL_FROM,
+                to: email,
+                subject: "Welcome to Sacco - Verify Your Account",
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2>Welcome, ${fullName}!</h2>
+                        <p>Your Sacco account has been created.</p>
+                        <p><strong>Temporary Password:</strong> ${password}</p>
+                        <p>Please click the button below to verify your email and activate your account:</p>
+                        <a href="${verificationLink}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Verify Email</a>
+                        <p>Or verify using this link: ${verificationLink}</p>
+                    </div>
+                `
+            });
+
+            res.json({ message: "User registered. Verification email sent.", user: newUser.rows[0] });
 
         } catch (e) {
             await client.query('ROLLBACK');
@@ -54,12 +90,32 @@ router.post('/register', validate(registerSchema), async (req, res) => {
         }
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Server error during registration" });
+        console.error("Registration Error:", err);
+        res.status(500).json({ error: "Server error during registration. Check logs." });
     }
 });
 
-// LOGIN
+// VERIFY EMAIL ROUTE
+router.post('/verify-email', async (req, res) => {
+    const { token } = req.body;
+    try {
+        const result = await db.query(
+            "UPDATE users SET is_email_verified = TRUE, verification_token = NULL WHERE verification_token = $1 RETURNING id, email",
+            [token]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: "Invalid or expired token." });
+        }
+
+        res.json({ success: true, message: "Email verified successfully!" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Verification failed." });
+    }
+});
+
+// LOGIN (Blocks Unverified)
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
@@ -68,6 +124,12 @@ router.post('/login', async (req, res) => {
         if (result.rows.length === 0) return res.status(400).json({ error: "Invalid Credentials" });
 
         const user = result.rows[0];
+        
+        // --- CHECK VERIFICATION ---
+        if (!user.is_email_verified) {
+            return res.status(403).json({ error: "Please verify your email first. Check your inbox." });
+        }
+
         if (!user.is_active) return res.status(403).json({ error: "Account deactivated. Contact Admin." });
 
         const validPass = await bcrypt.compare(password, user.password_hash);
@@ -79,10 +141,11 @@ router.post('/login', async (req, res) => {
             { expiresIn: '8h' } 
         );
 
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie('token', token, {
             httpOnly: true,
-            secure: true,       
-            sameSite: 'none',   
+            secure: isProduction,       
+            sameSite: isProduction ? 'none' : 'lax',   
             maxAge: 8 * 60 * 60 * 1000 
         });
 
@@ -103,13 +166,10 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// ... (Keep logout, users, setup-status, change-password, etc.) ...
 // LOGOUT
 router.post('/logout', (req, res) => {
-    res.clearCookie('token', {
-        httpOnly: true,
-        secure: true,
-        sameSite: 'none'
-    });
+    res.clearCookie('token');
     res.json({ message: "Logged out" });
 });
 
@@ -126,54 +186,6 @@ router.get('/users', authenticateUser, async (req, res) => {
     }
 });
 
-// --- FIX: UPDATED SETUP STATUS ---
-router.get('/setup-status', async (req, res) => {
-    try {
-        const result = await db.query("SELECT DISTINCT role FROM users");
-        const existingRoles = result.rows.map(r => r.role);
-        const requiredRoles = ['CHAIRPERSON', 'SECRETARY', 'TREASURER', 'LOAN_OFFICER'];
-        const missingRoles = requiredRoles.filter(role => !existingRoles.includes(role));
-        const hasAdmin = existingRoles.includes('ADMIN');
-        
-        let defaultAdminUnsafe = false;
-        if (hasAdmin) {
-            const adminRes = await db.query("SELECT must_change_password FROM users WHERE role = 'ADMIN' LIMIT 1");
-            if (adminRes.rows[0] && adminRes.rows[0].must_change_password) defaultAdminUnsafe = true;
-        }
-
-        res.json({ 
-            isComplete: missingRoles.length === 0 && hasAdmin && !defaultAdminUnsafe, 
-            hasAdmin,
-            missingRoles 
-        });
-    } catch (err) {
-        console.error("Setup Status Error:", err);
-        res.status(500).json({ error: "Server error" });
-    }
-});
-
-router.post('/create-key-user', authenticateUser, async (req, res) => {
-    if (req.user.role !== 'ADMIN') return res.status(403).json({ error: "Access Denied" });
-    const { fullName, email, password, phoneNumber, role } = req.body;
-    if (!fullName || !email || !password || !phoneNumber || !role) return res.status(400).json({ error: "All fields are required" });
-
-    try {
-        const userCheck = await db.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (userCheck.rows.length > 0) return res.status(400).json({ error: "User already exists" });
-
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(password, salt);
-
-        await db.query(
-            "INSERT INTO users (full_name, email, password_hash, phone_number, role, must_change_password) VALUES ($1, $2, $3, $4, $5, TRUE)",
-            [fullName, email, hash, phoneNumber, role]
-        );
-        res.json({ message: `${role} created successfully` });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to create user" });
-    }
-});
-
 // CHANGE PASSWORD
 router.post('/change-password', authenticateUser, async (req, res) => {
     const { newPassword } = req.body; 
@@ -185,45 +197,6 @@ router.post('/change-password', authenticateUser, async (req, res) => {
         res.json({ message: "Password updated successfully" });
     } catch (err) {
         res.status(500).json({ error: "Update failed" });
-    }
-});
-
-// ADMIN UPDATE MEMBER (Fixed for partial updates)
-router.put('/admin/update/:userId', authenticateUser, async (req, res) => {
-    if (req.user.role !== 'ADMIN') return res.status(403).json({ error: "Access Denied" });
-    const targetId = req.params.userId;
-    const { fullName, email, phoneNumber, role, password } = req.body;
-
-    try {
-        let query = "UPDATE users SET full_name = $1, email = $2, phone_number = $3, role = $4";
-        let params = [fullName, email, phoneNumber, role];
-        
-        if (password && password.trim() !== "") {
-            const salt = await bcrypt.genSalt(10);
-            const hash = await bcrypt.hash(password, salt);
-            query += ", password_hash = $5 WHERE id = $6";
-            params.push(hash, targetId);
-        } else {
-            query += " WHERE id = $5";
-            params.push(targetId);
-        }
-
-        await db.query(query, params);
-        res.json({ message: "User updated successfully" });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to update user" });
-    }
-});
-
-// ADMIN DELETE MEMBER
-router.delete('/admin/delete/:userId', authenticateUser, async (req, res) => {
-    if (req.user.role !== 'ADMIN') return res.status(403).json({ error: "Access Denied" });
-    try {
-        await db.query("DELETE FROM users WHERE id = $1", [req.params.userId]);
-        res.json({ message: "User deleted successfully" });
-    } catch (err) {
-        if (err.code === '23503') return res.status(400).json({ error: "Cannot delete user with active history." });
-        res.status(500).json({ error: "Failed to delete user" });
     }
 });
 

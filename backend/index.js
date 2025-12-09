@@ -10,17 +10,26 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// --- CONFIG: Trust Proxy & CORS ---
 app.set('trust proxy', 1); 
 
-const rawOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
-const ALLOWED_ORIGIN = rawOrigin.endsWith('/') ? rawOrigin.slice(0, -1) : rawOrigin;
-
-console.log(`🔒 CORS Policy Enabled for Origin: ${ALLOWED_ORIGIN}`);
+// Allow multiple origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://sacco-management-system-azure.vercel.app',
+  process.env.FRONTEND_URL
+].filter(Boolean).map(url => url.replace(/\/$/, ""));
 
 app.use(helmet()); 
 app.use(cors({ 
-    origin: ALLOWED_ORIGIN, 
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log(`🚫 Blocked CORS from: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    }, 
     credentials: true, 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -30,21 +39,11 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser()); 
 
-// --- RATE LIMITING ---
-const loginLimiter = rateLimit({
-    windowMs: 5 * 60 * 1000, // 5 minutes (Reduced from 30)
-    max: 20, // Increased limit for testing
-    message: { error: "Too many login attempts, please try again later." }
-});
+// Rate Limits
+const loginLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 20, message: { error: "Too many login attempts." } });
+const apiLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false });
 
-const apiLimiter = rateLimit({
-    windowMs: 5 * 60 * 1000, 
-    max: 200, 
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// --- MODULES ---
+// Routes
 const authRoutes = require('./modules/auth/routes');
 const loanRoutes = require('./modules/loans'); 
 const paymentRoutes = require('./modules/payments/routes');
@@ -70,49 +69,63 @@ const initializeSystem = async () => {
         await db.query('SELECT NOW()');
         console.log("✅ Database Connected");
 
-        // 1. AUTO-FIX: Add missing columns to 'transactions' table if they don't exist
         console.log("⚙️  Checking Database Schema...");
         await db.query(`
             DO $$ 
             BEGIN 
+                -- 1. Transactions Fixes
                 BEGIN
                     ALTER TABLE transactions ADD COLUMN status VARCHAR(50) DEFAULT 'COMPLETED';
-                EXCEPTION
-                    WHEN duplicate_column THEN NULL;
-                END;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
                 BEGIN
                     ALTER TABLE transactions ADD COLUMN merchant_request_id VARCHAR(100);
-                EXCEPTION
-                    WHEN duplicate_column THEN NULL;
-                END;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
                 BEGIN
                     ALTER TABLE transactions ADD COLUMN checkout_request_id VARCHAR(100);
-                EXCEPTION
-                    WHEN duplicate_column THEN NULL;
-                END;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+
+                -- 2. Users Fixes (Security & KYC)
                 BEGIN
                     ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT FALSE;
-                EXCEPTION
-                    WHEN duplicate_column THEN NULL;
-                END;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN DEFAULT FALSE;
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN verification_token VARCHAR(255);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                
+                -- 3. KYC Fields
+                BEGIN
+                    ALTER TABLE users ADD COLUMN id_number VARCHAR(20);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN kra_pin VARCHAR(20);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN next_of_kin_name VARCHAR(100);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN next_of_kin_phone VARCHAR(20);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
+                BEGIN
+                    ALTER TABLE users ADD COLUMN next_of_kin_relation VARCHAR(50);
+                EXCEPTION WHEN duplicate_column THEN NULL; END;
             END $$;
         `);
-        console.log("✅ Schema Verified (Missing columns added automatically)");
+        console.log("✅ Schema Verified (Columns synced automatically)");
 
-        // 2. Check for Admin
+        // Create Admin if missing
         const result = await db.query("SELECT COUNT(*) FROM users");
         if (parseInt(result.rows[0].count) === 0) {
             console.log("⚠️ No users found. Creating Default Admin...");
-            const adminPassword = process.env.INITIAL_ADMIN_PASSWORD;
-            if (adminPassword) {
-                const hash = await bcrypt.hash(adminPassword, 10);
-                await db.query(
-                    `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password) 
-                     VALUES ($1, $2, $3, $4, $5, $6)`,
-                    ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000', true]
-                );
-                console.log("✅ DEFAULT ADMIN CREATED");
-            }
+            const hash = await bcrypt.hash('S@cc0_.Adm!n123', 10);
+            await db.query(
+                `INSERT INTO users (full_name, email, password_hash, role, phone_number, must_change_password, is_email_verified) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                ['System Administrator', 'admin@sacco.com', hash, 'ADMIN', '0700000000', true, true]
+            );
+            console.log("✅ DEFAULT ADMIN CREATED");
         }
     } catch (err) {
         console.error("❌ System Init Failed:", err.message);

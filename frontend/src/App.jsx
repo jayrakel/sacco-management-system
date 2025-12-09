@@ -10,9 +10,10 @@ import TreasurerDashboard from './pages/TreasurerDashboard';
 import LoanOfficerDashboard from './pages/LoanOfficerDashboard';
 import ChairpersonDashboard from './pages/ChairpersonDashboard';
 
-// Initialization Pages
+// Initialization & Security Pages
 import SetupUsers from './pages/SetupUsers';
 import ChangePassword from './pages/ChangePassword';
+import VerifyEmail from './pages/VerifyEmail'; // --- NEW: Import Verification Page
 
 // Error Pages
 import { Unauthorized, NotFound, ServerError } from './pages/ErrorPages';
@@ -21,9 +22,10 @@ import api from './api';
 const INACTIVITY_LIMIT = 5 * 60 * 1000; 
 
 export default function App() {
+  // 1. Initialize User from LocalStorage
   const [user, setUser] = useState(() => {
     try {
-      const savedUser = localStorage.getItem('user');
+      const savedUser = localStorage.getItem('sacco_user'); // Matched with Login.jsx key
       return savedUser ? JSON.parse(savedUser) : null;
     } catch (e) { return null; }
   });
@@ -33,28 +35,28 @@ export default function App() {
     try { await api.post('/api/auth/logout'); } catch (error) { console.error(error); }
     
     setUser(null);
-    localStorage.removeItem('user');
-    localStorage.removeItem('token');
+    localStorage.removeItem('sacco_user'); // Matched with Login.jsx key
+    localStorage.removeItem('token'); // Cleanup if used
   }, []);
 
-  // --- NEW: Dynamic Branding (Favicon & Title) ---
+  // 2. Dynamic Branding (Favicon & Title)
   useEffect(() => {
     const fetchBranding = async () => {
       try {
         const res = await api.get('/api/settings/branding');
         const settings = res.data || [];
 
-        // 1. Set Page Title (Sacco Name)
+        // Set Page Title
         const nameSetting = settings.find(s => s.setting_key === 'sacco_name');
         if (nameSetting && nameSetting.setting_value) {
           document.title = nameSetting.setting_value;
         }
 
-        // 2. Set Favicon
+        // Set Favicon
         const favSetting = settings.find(s => s.setting_key === 'sacco_favicon');
         if (favSetting && favSetting.setting_value) {
           const link = document.querySelector("link[rel~='icon']") || document.createElement('link');
-          link.type = 'image/png'; // Or detect type if needed
+          link.type = 'image/png'; 
           link.rel = 'icon';
           link.href = favSetting.setting_value;
           document.getElementsByTagName('head')[0].appendChild(link);
@@ -66,7 +68,7 @@ export default function App() {
     fetchBranding();
   }, []);
 
-  // Inactivity Timer
+  // 3. Inactivity Timer
   useEffect(() => {
     if (!user) return;
     let timeoutId;
@@ -90,15 +92,15 @@ export default function App() {
   const DashboardController = () => {
     const location = useLocation();
 
-    // 1. Authentication Check
-    if (!user) return <Navigate to="/" replace />;
+    // A. Authentication Check
+    if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
 
-    // 2. Security Check: Force Password Change
+    // B. Security Check: Force Password Change
     if (user.mustChangePassword) {
         return <Navigate to="/change-password" replace />;
     }
 
-    // 3. Role-Based Rendering
+    // C. Role-Based Rendering
     const commonProps = { user, onLogout: handleLogout };
 
     switch (user.role) {
@@ -115,37 +117,32 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        {/* Public Login */}
-        <Route 
-          path="/" 
-          element={!user ? <Login setUser={setUser} /> : <Navigate to="/portal" />} 
-        />
+        {/* --- PUBLIC ROUTES --- */}
+        <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/portal" />} />
+        <Route path="/" element={<Navigate to="/login" />} />
         
-        {/* --- INITIALIZATION ROUTES --- */}
+        {/* NEW: Verification Route (Must be public) */}
+        <Route path="/verify-email" element={<VerifyEmail />} />
+
+        {/* --- SYSTEM INITIALIZATION --- */}
+        <Route 
+            path="/setup" 
+            element={<SetupUsers />} 
+        />
+
+        {/* --- PROTECTED ROUTES --- */}
         <Route 
             path="/change-password" 
-            element={user ? <ChangePassword onPasswordChanged={() => {
-                const updated = { ...user, mustChangePassword: false };
-                setUser(updated);
-                localStorage.setItem('user', JSON.stringify(updated));
-            }}/> : <Navigate to="/" />} 
+            element={user ? <ChangePassword user={user} onLogout={handleLogout} /> : <Navigate to="/login" />} 
         />
 
-        <Route 
-            path="/setup-users" 
-            element={user?.role === 'ADMIN' ? <SetupUsers /> : <Navigate to="/portal" />} 
-        />
-
-        {/* --- SECURE UNIFIED ROUTE --- */}
-        {/* This keeps your URL structure as /portal/ for everyone */}
+        {/* --- SECURE UNIFIED PORTAL --- */}
         <Route path="/portal/*" element={<DashboardController />} />
         
-        {/* Error Routes */}
+        {/* --- ERROR PAGES --- */}
         <Route path="/unauthorized" element={<Unauthorized />} />
         <Route path="/server-error" element={<ServerError />} />
         <Route path="/not-found" element={<NotFound />} />
-        
-        {/* Catch-all */}
         <Route path="*" element={<Navigate to="/not-found" />} />
       </Routes>
     </Router>
