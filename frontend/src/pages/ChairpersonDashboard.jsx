@@ -228,6 +228,30 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const handlePrintReport = () => {
         window.print();
     };
+    const handleDownloadReport = async () => {
+        try {
+            const response = await api.get('/api/reports/summary/download', {
+                responseType: 'blob', 
+            });
+            
+            // Generate filename: "Sacco_Name_Executive_Report_2023-12-09_10-30.pdf"
+            const safeSaccoName = saccoName.replace(/ /g, '_');
+            const now = new Date();
+            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19); // "2023-12-09T10-30-00"
+            const fileName = `${safeSaccoName}_Executive_Report_${timestamp}.pdf`;
+
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', fileName);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (err) {
+            console.error(err);
+            alert("Failed to download report.");
+        }
+    };
 
     const renderTabButton = (id, label, icon) => (
         <button onClick={() => switchTab(id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition ${activeTab === id ? 'bg-white text-indigo-900 shadow-md' : 'text-indigo-200 hover:text-white'}`}>{icon} {label}</button>
