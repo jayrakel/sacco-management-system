@@ -11,13 +11,12 @@ const secretaryRoutes = require('./secretary.routes');
 const treasuryRoutes = require('./treasury.routes');
 const notifRoutes = require('./notification.routes');
 const officerRoutes = require('./officer.routes');
-const chairRoutes = require('./chair.routes');
+const chairRoutes = require('./chair.routes'); // <--- ADDED
 
 // Apply authentication middleware globally to ALL loan routes
 router.use(authenticateUser);
 
 // Mount them
-// We mount them at root ('/') so they keep their original paths defined inside the files
 router.use('/', appRoutes);
 router.use('/', guarantorRoutes);
 router.use('/', votingRoutes);
@@ -26,6 +25,6 @@ router.use('/', secretaryRoutes);
 router.use('/', treasuryRoutes);
 router.use('/', notifRoutes);
 router.use('/', officerRoutes);
-router.use('/', chairRoutes);
+router.use('/', chairRoutes); // <--- ADDED
 
 module.exports = router;

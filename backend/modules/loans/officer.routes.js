@@ -4,15 +4,15 @@ const db = require('../../db');
 const { requireRole } = require('../auth/middleware');
 const { notifyUser } = require('../common/notify');
 
-// VERIFY APPLICATION (Loan Officer Action)
-
+// 1. GET APPLICATIONS (For Loan Officer Dashboard)
+// Fetches loans that need review or are active in the portfolio
 router.get('/officer/applications', requireRole('LOAN_OFFICER'), async (req, res) => {
     try {
         const result = await db.query(
-            `SELECT l.*, u.full_name 
+            `SELECT l.*, u.full_name, u.phone_number
              FROM loan_applications l 
              JOIN users u ON l.user_id = u.id 
-             WHERE l.status IN ('SUBMITTED', 'PENDING_GUARANTORS', 'ACTIVE', 'VERIFIED')
+             WHERE l.status IN ('SUBMITTED', 'PENDING_GUARANTORS', 'VERIFIED', 'ACTIVE', 'IN_ARREARS', 'OVERDUE')
              ORDER BY l.created_at DESC`
         );
         res.json(result.rows);
@@ -21,11 +21,12 @@ router.get('/officer/applications', requireRole('LOAN_OFFICER'), async (req, res
         res.status(500).json({ error: "Fetch error" });
     }
 });
-// Moves status from 'SUBMITTED' -> 'VERIFIED'
+
+// 2. VERIFY APPLICATION (Moves status from 'SUBMITTED' -> 'VERIFIED')
 router.post('/officer/verify', requireRole('LOAN_OFFICER'), async (req, res) => {
     const { loanId } = req.body;
     try {
-        // 1. Check current status
+        // Check current status
         const check = await db.query("SELECT user_id, status FROM loan_applications WHERE id=$1", [loanId]);
         if (check.rows.length === 0) return res.status(404).json({ error: "Loan not found" });
         
@@ -33,10 +34,10 @@ router.post('/officer/verify', requireRole('LOAN_OFFICER'), async (req, res) => 
             return res.status(400).json({ error: "Loan must be in SUBMITTED state to verify." });
         }
 
-        // 2. Update Status
+        // Update Status
         await db.query("UPDATE loan_applications SET status='VERIFIED' WHERE id=$1", [loanId]);
 
-        // 3. Notify Member
+        // Notify Member
         await notifyUser(check.rows[0].user_id, `Your application #${loanId} has been verified by the Credit Officer and forwarded to the Secretary.`);
 
         res.json({ success: true, message: "Application verified successfully" });

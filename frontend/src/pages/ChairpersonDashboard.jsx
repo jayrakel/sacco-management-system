@@ -5,12 +5,12 @@ import {
     Gavel, TrendingUp, Users, Settings, UserPlus, Save, 
     DollarSign, FileText, CheckCircle, AlertCircle, 
     FileWarning, PlusCircle, Calculator, ShieldAlert,
-    Printer, PieChart, Loader, Plus, Trash2 
+    Printer, PieChart, Loader, Plus, Trash2, List
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
-// Added 'reports' to the TAB_MAP
-const TAB_MAP = { 'voting': 'gov-01', 'finance': 'fin-88', 'members': 'dir-x2', 'settings': 'cfg-99', 'register': 'new-00', 'reports': 'rep-77' };
+// Added 'portfolio' to the TAB_MAP
+const TAB_MAP = { 'voting': 'gov-01', 'finance': 'fin-88', 'members': 'dir-x2', 'settings': 'cfg-99', 'register': 'new-00', 'reports': 'rep-77', 'portfolio': 'prt-55' };
 const CODE_TO_TAB = Object.entries(TAB_MAP).reduce((acc, [key, val]) => { acc[val] = key; return acc; }, {});
 
 export default function ChairpersonDashboard({ user, onLogout }) {
@@ -36,7 +36,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [transactions, setTransactions] = useState([]); 
     const [users, setUsers] = useState([]);
     const [saccoSettings, setSaccoSettings] = useState([]); 
-    const [paymentChannels, setPaymentChannels] = useState([]); // NEW: Channels State
+    const [paymentChannels, setPaymentChannels] = useState([]); 
+    const [portfolio, setPortfolio] = useState([]); // NEW: Active Loans
     
     // Report Data State
     const [reportData, setReportData] = useState(null);
@@ -50,18 +51,8 @@ export default function ChairpersonDashboard({ user, onLogout }) {
 
     // Forms
     const [regForm, setRegForm] = useState({ 
-        fullName: '', 
-        email: '', 
-        password: '', 
-        phoneNumber: '', 
-        role: 'MEMBER', 
-        paymentRef: '',
-        // New fields required by backend
-        idNumber: '', 
-        kraPin: '', 
-        nextOfKinName: '', 
-        nextOfKinPhone: '', 
-        nextOfKinRelation: '' 
+        fullName: '', email: '', password: '', phoneNumber: '', role: 'MEMBER', paymentRef: '',
+        idNumber: '', kraPin: '', nextOfKinName: '', nextOfKinPhone: '', nextOfKinRelation: '' 
     });
 
     const [transForm, setTransForm] = useState({ userId: '', type: 'FINE', amount: '', reference: '', description: '' });
@@ -79,7 +70,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 if (resSettings.data) {
                     const allSettings = resSettings.data;
                     
-                    // Filter out payment_channels from generic list so we can show custom UI
                     setSaccoSettings(allSettings.filter(s => s.category === 'SACCO' && s.setting_key !== 'payment_channels'));
                     
                     const logoSetting = allSettings.find(s => s.setting_key === 'sacco_logo');
@@ -91,7 +81,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     const regFeeSetting = allSettings.find(s => s.setting_key === 'registration_fee');
                     if (regFeeSetting) setCurrentRegFee(parseFloat(regFeeSetting.setting_value));
 
-                    // NEW: Load Payment Channels
                     const channels = allSettings.find(s => s.setting_key === 'payment_channels');
                     if (channels) setPaymentChannels(JSON.parse(channels.setting_value || "[]"));
 
@@ -128,6 +117,10 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                 } else if (activeTab === 'reports') {
                     const resRep = await api.get('/api/reports/summary');
                     setReportData(resRep.data);
+                } else if (activeTab === 'portfolio') {
+                    // NEW: Fetch active loans
+                    const resPort = await api.get('/api/reports/active-portfolio');
+                    setPortfolio(resPort.data || []);
                 }
             } catch (err) { console.error("Fetch failed", err); }
         };
@@ -197,7 +190,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         e.preventDefault();
         setLoading(true);
         try {
-            // Updated to clear form properly with new fields
             await api.post('/api/auth/register', regForm);
             alert(`New Member Registered! Verification email sent.`);
             setRegForm({ 
@@ -246,14 +238,12 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         } catch (err) { alert("Update failed"); }
     };
 
-    // --- NEW: Manage Payment Channels (Moved from Admin) ---
     const addChannel = () => {
         const newChannels = [
           ...paymentChannels,
           { type: "BANK", name: "New Bank", account: "000000", instructions: "Ref Code" },
         ];
         setPaymentChannels(newChannels);
-        // We use JSON.stringify because the backend expects text
         api.post('/api/settings/update', { key: "payment_channels", value: JSON.stringify(newChannels) })
            .then(() => alert("Added new channel slot. Fill details and Save."))
            .catch(() => alert("Failed to add."));
@@ -280,7 +270,6 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setPaymentChannels(updated);
         api.post('/api/settings/update', { key: "payment_channels", value: JSON.stringify(updated) });
     };
-    // -----------------------------------------------------
 
     const handlePrintReport = () => {
         window.print();
@@ -379,6 +368,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                         <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto max-w-full">
                             {renderTabButton('voting', 'Voting', <Gavel size={16}/>)}
                             {renderTabButton('finance', 'Finance', <TrendingUp size={16}/>)}
+                            {renderTabButton('portfolio', 'Active Loans', <List size={16}/>)}
                             {renderTabButton('reports', 'Reports', <PieChart size={16}/>)}
                             {renderTabButton('members', 'Directory', <Users size={16}/>)}
                             {renderTabButton('settings', 'Policies', <Settings size={16}/>)}
@@ -622,6 +612,56 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                     </button>
                                 </form>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* NEW: ACTIVE PORTFOLIO TAB */}
+                {activeTab === 'portfolio' && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in print:shadow-none print:border-none">
+                        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center print:hidden">
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <List className="text-indigo-600" /> Active Loan Portfolio
+                            </h2>
+                            <button onClick={() => window.print()} className="text-xs font-bold text-indigo-600 hover:underline">Print Report</button>
+                        </div>
+                        
+                        {/* Print Header */}
+                        <div className="hidden print:block p-6 border-b border-slate-100">
+                            <h1 className="text-2xl font-bold text-slate-900">Active Loans Portfolio</h1>
+                            <p className="text-slate-500 text-sm mt-1">{saccoName} • As of {new Date().toLocaleDateString()}</p>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left text-slate-600">
+                                <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
+                                    <tr>
+                                        <th className="px-6 py-3">Member</th>
+                                        <th className="px-6 py-3">Disbursed</th>
+                                        <th className="px-6 py-3">Principal+Int</th>
+                                        <th className="px-6 py-3">Repaid</th>
+                                        <th className="px-6 py-3">Balance</th>
+                                        <th className="px-6 py-3 text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {portfolio.map(loan => (
+                                        <tr key={loan.id} className="hover:bg-slate-50">
+                                            <td className="px-6 py-4 font-medium text-slate-900">{loan.full_name}</td>
+                                            <td className="px-6 py-4 text-xs text-slate-500">
+                                                {loan.disbursed_at ? new Date(loan.disbursed_at).toLocaleDateString() : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 font-bold">KES {parseFloat(loan.total_due).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-emerald-600">KES {parseFloat(loan.amount_repaid).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-red-600 font-bold">KES {parseFloat(loan.outstanding_balance).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded">ACTIVE</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {portfolio.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}

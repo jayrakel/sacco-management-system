@@ -1,24 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
-    ClipboardList, 
-    CheckCircle, 
-    FileText, 
-    Megaphone, 
-    BarChart3, 
-    XCircle, 
-    Calendar,
-    Clock
+    ClipboardList, CheckCircle, FileText, Megaphone, 
+    BarChart3, XCircle, Calendar, Clock, List
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function SecretaryDashboard({ user, onLogout }) {
-    // Tabs: 'review' (Incoming) | 'meetings' (Voting/Tally)
+    // Tabs: 'review' (Incoming) | 'meetings' (Voting/Tally) | 'portfolio' (Reporting)
     const [activeTab, setActiveTab] = useState('review');
     
     // Data States
     const [reviewQueue, setReviewQueue] = useState([]); // Loans waiting to be tabled
     const [liveTally, setLiveTally] = useState([]);     // Loans currently being voted on
+    const [portfolio, setPortfolio] = useState([]);     // Active Loans for Reporting
+    
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
 
@@ -37,6 +33,10 @@ export default function SecretaryDashboard({ user, onLogout }) {
                     // Fetch live voting results
                     const res = await api.get('/api/loan/secretary/live-tally');
                     setLiveTally(res.data);
+                } else if (activeTab === 'portfolio') {
+                    // NEW: Fetch all active loans
+                    const res = await api.get('/api/reports/active-portfolio');
+                    setPortfolio(res.data);
                 }
             } catch (err) {
                 console.error("Error loading data", err);
@@ -47,11 +47,8 @@ export default function SecretaryDashboard({ user, onLogout }) {
 
     // --- ACTIONS ---
 
-    // 1. Table a Motion (Moves loan from SUBMITTED -> TABLED)
-    // This is the step that updates the Admin Dashboard!
     const handleTableMotion = async (loanId) => {
         if (!window.confirm("Table this application? It will become visible to the Chairperson/Admin.")) return;
-        
         setLoading(true);
         try {
             await api.post('/api/loan/table', { loanId });
@@ -63,11 +60,9 @@ export default function SecretaryDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    // 2. Finalize Vote (Moves loan from VOTING -> APPROVED/REJECTED)
     const handleFinalize = async (loanId, decision) => {
         const action = decision === 'APPROVED' ? 'APPROVE' : 'REJECT';
         if (!window.confirm(`Are you sure you want to ${action} this loan based on the votes?`)) return;
-
         try {
             await api.post('/api/loan/secretary/finalize', { loanId, decision });
             alert(`Loan ${action}D successfully!`);
@@ -77,7 +72,6 @@ export default function SecretaryDashboard({ user, onLogout }) {
         }
     };
 
-    // 3. Announce Meeting
     const handleAnnounce = async (e) => {
         e.preventDefault();
         try {
@@ -105,7 +99,7 @@ export default function SecretaryDashboard({ user, onLogout }) {
         <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
             <DashboardHeader user={user} onLogout={onLogout} title="Secretary Panel" />
 
-            <main className="max-w-6xl mx-auto px-4 sm:px-6 mt-8 pb-12">
+            <main className="max-w-7xl mx-auto px-4 sm:px-6 mt-8 pb-12">
                 
                 {/* Header */}
                 <div className="bg-indigo-900 text-white rounded-2xl p-6 mb-8 shadow-lg flex flex-col md:flex-row justify-between items-center gap-6">
@@ -113,11 +107,12 @@ export default function SecretaryDashboard({ user, onLogout }) {
                         <h1 className="text-2xl font-bold flex items-center gap-3">
                             <ClipboardList className="text-indigo-400" /> Secretary Dashboard
                         </h1>
-                        <p className="text-indigo-300 text-sm mt-1">Prepare agendas and record meeting minutes.</p>
+                        <p className="text-indigo-300 text-sm mt-1">Prepare agendas, record minutes, and track portfolio.</p>
                     </div>
-                    <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50">
+                    <div className="flex bg-indigo-950/50 p-1.5 rounded-xl border border-indigo-800/50 overflow-x-auto">
                         {renderTabButton('review', 'Table Motions', <FileText size={16}/>)}
-                        {renderTabButton('meetings', 'Live Voting & Minutes', <BarChart3 size={16}/>)}
+                        {renderTabButton('meetings', 'Live Voting', <BarChart3 size={16}/>)}
+                        {renderTabButton('portfolio', 'Master Loan List', <List size={16}/>)}
                     </div>
                 </div>
 
@@ -263,6 +258,47 @@ export default function SecretaryDashboard({ user, onLogout }) {
                                     ))}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                )}
+
+                {/* 3. ACTIVE PORTFOLIO (NEW) */}
+                {activeTab === 'portfolio' && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                <List className="text-indigo-600"/> Master Loan List
+                            </h3>
+                            <button onClick={() => window.print()} className="text-xs text-indigo-600 font-bold hover:underline">Print List</button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left text-slate-600">
+                                <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
+                                    <tr>
+                                        <th className="px-6 py-3">Member</th>
+                                        <th className="px-6 py-3">Disbursed Date</th>
+                                        <th className="px-6 py-3">Loan Amount</th>
+                                        <th className="px-6 py-3">Balance</th>
+                                        <th className="px-6 py-3">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {portfolio.map(loan => (
+                                        <tr key={loan.id} className="hover:bg-slate-50">
+                                            <td className="px-6 py-4 font-medium text-slate-900">{loan.full_name}</td>
+                                            <td className="px-6 py-4 text-xs text-slate-500">
+                                                {loan.disbursed_at ? new Date(loan.disbursed_at).toLocaleDateString() : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 font-bold">KES {parseFloat(loan.total_due).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-red-600 font-bold">KES {parseFloat(loan.outstanding_balance).toLocaleString()}</td>
+                                            <td className="px-6 py-4">
+                                                <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-1 rounded">ACTIVE</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {portfolio.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}

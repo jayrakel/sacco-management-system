@@ -22,19 +22,16 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // NOTE: You will need to enable these endpoints in your backend
-                // For now, we reuse/adapt admin endpoints or mock the data structure
+                // FIXED: Use correct endpoint for both tabs
+                const res = await api.get('/api/loan/officer/applications');
                 
                 if (activeTab === 'appraisals') {
-                    // Fetch loans waiting for review (Status: PENDING_GUARANTORS or SUBMITTED)
-                    // const res = await api.get('/api/loan/admin/all');
-                    const res = await api.get('/api/loan/officer/applications');
-                    // Filter locally for demo purposes if backend filter isn't ready
+                    // Filter for pending loans
                     const pending = res.data.filter(l => ['SUBMITTED', 'PENDING_GUARANTORS'].includes(l.status));
                     setApplications(pending);
                 } else if (activeTab === 'portfolio' || activeTab === 'defaulters') {
-                    const res = await api.get('/api/loan/admin/all');
-                    const active = res.data.filter(l => l.status === 'ACTIVE');
+                    // Filter for active loans
+                    const active = res.data.filter(l => ['ACTIVE', 'IN_ARREARS', 'OVERDUE'].includes(l.status));
                     setPortfolio(active);
                     
                     // Calculate basic stats
@@ -42,7 +39,7 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
                     setStats({ 
                         totalLoans: active.length, 
                         activeValue: totalVal,
-                        atRisk: active.filter(l => l.schedule?.status_text === 'IN ARREARS').length 
+                        atRisk: active.filter(l => l.status === 'IN_ARREARS' || l.status === 'OVERDUE').length 
                     });
                 }
             } catch (err) {
@@ -58,13 +55,11 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
         if (!window.confirm("Verify this application? It will be marked as reviewed.")) return;
         setLoading(true);
         try {
-            // Backend endpoint needed: /api/loan/officer/verify
-            // Using a generic update or placeholder for now
             await api.post('/api/loan/officer/verify', { loanId });
-            alert("Application verified successfully! (Mock Action)");
+            alert("Application verified successfully!");
             setRefreshKey(k => k + 1);
         } catch (err) {
-            alert("Verification failed");
+            alert(err.response?.data?.error || "Verification failed");
         }
         setLoading(false);
     };
@@ -196,17 +191,20 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
                                     {portfolio.map(loan => {
-                                        // Mock calculation for demo if 'schedule' missing
-                                        const progress = loan.total_due > 0 ? (loan.amount_repaid / loan.total_due) * 100 : 0;
+                                        const repaid = parseFloat(loan.amount_repaid);
+                                        const due = parseFloat(loan.total_due);
+                                        const progress = due > 0 ? (repaid / due) * 100 : 0;
+                                        const balance = due - repaid;
+                                        
                                         return (
                                             <tr key={loan.id} className="hover:bg-slate-50">
                                                 <td className="px-6 py-4 font-medium text-slate-900">
                                                     {loan.full_name} <br/> 
                                                     <span className="text-xs text-slate-400 font-mono">REF: {loan.id}</span>
                                                 </td>
-                                                <td className="px-6 py-4">KES {parseFloat(loan.total_due).toLocaleString()}</td>
+                                                <td className="px-6 py-4">KES {due.toLocaleString()}</td>
                                                 <td className="px-6 py-4 font-bold text-slate-700">
-                                                    KES {(parseFloat(loan.total_due) - parseFloat(loan.amount_repaid)).toLocaleString()}
+                                                    KES {balance.toLocaleString()}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     <div className="w-24 bg-slate-200 rounded-full h-1.5">
@@ -215,8 +213,8 @@ export default function LoanOfficerDashboard({ user, onLogout }) {
                                                     <span className="text-xs text-slate-400">{progress.toFixed(0)}% Repaid</span>
                                                 </td>
                                                 <td className="px-6 py-4 text-center">
-                                                    <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2 py-1 rounded">
-                                                        ACTIVE
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded ${['IN_ARREARS', 'OVERDUE'].includes(loan.status) ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                        {loan.status}
                                                     </span>
                                                 </td>
                                             </tr>

@@ -24,25 +24,40 @@ router.get('/treasury/queue', requireRole('TREASURER'), async (req, res) => {
     }
 });
 
+// NEW: GET ACTIVE LOAN PORTFOLIO
+router.get('/treasury/portfolio', requireRole('TREASURER'), async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT l.id, l.amount_requested, l.amount_repaid, l.total_due, l.interest_amount, 
+                    l.status, l.disbursed_at, l.repayment_weeks,
+                    u.full_name, u.phone_number
+             FROM loan_applications l 
+             JOIN users u ON l.user_id = u.id
+             WHERE l.status IN ('ACTIVE', 'IN_ARREARS', 'OVERDUE', 'COMPLETED') 
+             ORDER BY l.disbursed_at DESC`
+        );
+        res.json(result.rows);
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Portfolio Error" }); 
+    }
+});
+
 // GET TREASURY STATS
 router.get('/treasury/stats', requireRole('TREASURER'), async (req, res) => {
     try {
-        // 1. Total Cash In (Deposits)
         const savingsRes = await db.query("SELECT COALESCE(SUM(amount), 0) as total FROM deposits WHERE status='COMPLETED'");
         const totalSavings = parseFloat(savingsRes.rows[0].total);
 
-        // 2. Total Fees/Income (Transactions)
         const incomeRes = await db.query(
             `SELECT COALESCE(SUM(amount), 0) as total FROM transactions 
              WHERE type NOT IN ('LOAN_DISBURSEMENT', 'DEPOSIT', 'LOAN_REPAYMENT')`
         );
         const totalIncome = parseFloat(incomeRes.rows[0].total);
 
-        // 3. Total Repayments
         const repayRes = await db.query("SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'LOAN_REPAYMENT'");
         const totalRepaid = parseFloat(repayRes.rows[0].total);
 
-        // 4. Total Disbursed (Active/Past Loans)
         const disbursedRes = await db.query(
             `SELECT COALESCE(SUM(amount_requested), 0) as total 
              FROM loan_applications 
@@ -50,7 +65,6 @@ router.get('/treasury/stats', requireRole('TREASURER'), async (req, res) => {
         );
         const totalDisbursed = parseFloat(disbursedRes.rows[0].total);
 
-        // 5. Liquidity
         const availableFunds = (totalSavings + totalIncome + totalRepaid) - totalDisbursed;
 
         res.json({ availableFunds, totalDisbursed });
@@ -61,7 +75,7 @@ router.get('/treasury/stats', requireRole('TREASURER'), async (req, res) => {
     }
 });
 
-// --- UPDATED: PROCESS DISBURSEMENT (With Amortization Choice) ---
+// PROCESS DISBURSEMENT
 router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSchema), async (req, res) => {
     const { loanId } = req.body;
     const client = await db.pool.connect();
@@ -69,7 +83,6 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
     try {
         await client.query('BEGIN');
         
-        // 1. Fetch Loan & System Settings
         const check = await client.query("SELECT status, amount_requested, repayment_weeks, user_id FROM loan_applications WHERE id=$1", [loanId]);
         if (check.rows.length === 0 || check.rows[0].status !== 'APPROVED') throw new Error("Invalid loan status");
         
@@ -77,42 +90,26 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
         const principal = parseFloat(loan.amount_requested);
         const weeks = parseInt(loan.repayment_weeks);
 
-        // Settings
         const rateVal = await getSetting('interest_rate'); 
         const typeVal = await getSetting('loan_interest_type');
         
         const rateInput = parseFloat(rateVal || 10);
-        const interestType = typeVal || 'FLAT'; // Default to FLAT if missing
+        const interestType = typeVal || 'FLAT'; 
 
         let totalInterest = 0;
         let totalDue = 0;
 
-        // 2. Calculate Based on Type
         if (interestType === 'REDUCING') {
-            // REDUCING BALANCE LOGIC
-            // Assumption: rateInput is % Per Annum (e.g., 12% PA)
-            // We convert to Weekly Rate: (12 / 100) / 52
             const weeklyRate = (rateInput / 100) / 52;
-            
-            // Formula: PMT = P * r * (1+r)^n / ((1+r)^n - 1)
             const factor = Math.pow(1 + weeklyRate, weeks);
             const weeklyInstallment = principal * ((weeklyRate * factor) / (factor - 1));
-            
             totalDue = weeklyInstallment * weeks;
             totalInterest = totalDue - principal;
-
-            console.log(`[Disburse] REDUCING: P=${principal}, Rate=${rateInput}% PA, Weeks=${weeks} -> Total Due=${totalDue.toFixed(2)}`);
-
         } else {
-            // FLAT RATE LOGIC (Legacy/Simple)
-            // Assumption: rateInput is Flat % of Principal (e.g., 10% Flat)
             totalInterest = principal * (rateInput / 100);
             totalDue = principal + totalInterest;
-
-            console.log(`[Disburse] FLAT: P=${principal}, Rate=${rateInput}% Flat -> Total Due=${totalDue.toFixed(2)}`);
         }
 
-        // 3. Update Loan Status
         await client.query(
             `UPDATE loan_applications 
              SET status='ACTIVE', 
@@ -124,7 +121,6 @@ router.post('/treasury/disburse', requireRole('TREASURER'), validate(disburseSch
             [totalInterest, totalDue, loanId]
         );
 
-        // 4. Create Transaction Record
         await client.query(
             "INSERT INTO transactions (user_id, type, amount, reference_code, description) VALUES ($1, 'LOAN_DISBURSEMENT', $2, $3, $4)", 
             [loan.user_id, principal, `DISB-${loanId}`, `Disbursement (${interestType} Interest)`]

@@ -1,19 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
-    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield
+    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield, List
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
 export default function TreasurerDashboard({ user, onLogout }) {
-    // Main Tabs: 'queue', 'verification', 'finance'
+    // Main Tabs: 'queue', 'verification', 'finance', 'portfolio'
     const [activeTab, setActiveTab] = useState('queue'); 
     const [financeSubTab, setFinanceSubTab] = useState('overview');
 
     // Data State
     const [queue, setQueue] = useState([]);
     const [stats, setStats] = useState({ availableFunds: 0, totalDisbursed: 0 });
-    const [pendingDeposits, setPendingDeposits] = useState([]); // NEW: For Verification
+    const [pendingDeposits, setPendingDeposits] = useState([]); 
+    const [portfolio, setPortfolio] = useState([]); // NEW: Active Loans
     
     // Financial Records
     const [deposits, setDeposits] = useState([]);
@@ -29,7 +30,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 const [qRes, sRes, depPendingRes] = await Promise.all([
                     api.get('/api/loan/treasury/queue'),
                     api.get('/api/loan/treasury/stats'),
-                    api.get('/api/payments/admin/deposits/pending') // NEW ENDPOINT
+                    api.get('/api/payments/admin/deposits/pending') 
                 ]);
                 setQueue(qRes.data);
                 setStats(sRes.data);
@@ -42,13 +43,19 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 ]);
                 setDeposits(resDeposits.data || []);
                 setTransactions(resTrans.data || []);
+
+                // 3. Fetch Portfolio (If tab is active or pre-fetch)
+                if(activeTab === 'portfolio') {
+                    const resPort = await api.get('/api/reports/active-portfolio');
+                    setPortfolio(resPort.data || []);
+                }
                 
             } catch (err) {
                 console.error("Error loading treasury data", err);
             }
         };
         fetchData();
-    }, [refreshKey]);
+    }, [refreshKey, activeTab]);
 
     // --- CALCULATIONS FOR FINANCE TAB ---
     const safeSum = (arr) => {
@@ -102,7 +109,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
         setLoading(false);
     };
 
-    // NEW: Handle Deposit Approval
     const handleDepositDecision = async (depositId, decision) => {
         if(!window.confirm(`${decision} this deposit?`)) return;
         setLoading(true);
@@ -135,7 +141,6 @@ export default function TreasurerDashboard({ user, onLogout }) {
         </div>
     );
 
-    // --- TABLE ROWS RENDERER ---
     const renderFinanceTableRows = () => {
         let data = [];
         let typeLabel = '';
@@ -213,7 +218,7 @@ export default function TreasurerDashboard({ user, onLogout }) {
                 
                 {/* Navigation Tabs */}
                 <div className="flex justify-center mb-8">
-                    <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex gap-2">
+                    <div className="bg-white p-1 rounded-xl border border-slate-200 shadow-sm flex gap-2 flex-wrap justify-center">
                         <button 
                             onClick={() => setActiveTab('queue')} 
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'queue' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -225,6 +230,12 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'verification' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
                             Verify Deposits {pendingDeposits.length > 0 && <span className="ml-1 bg-red-500 text-white text-[10px] px-1.5 rounded-full">{pendingDeposits.length}</span>}
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('portfolio')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'portfolio' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            Active Portfolio
                         </button>
                         <button 
                             onClick={() => setActiveTab('finance')} 
@@ -429,6 +440,56 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 4. ACTIVE PORTFOLIO (NEW) */}
+                {activeTab === 'portfolio' && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+                        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                <List className="text-indigo-600"/> Active Loan Portfolio
+                            </h3>
+                            <span className="text-xs font-bold bg-white border border-slate-200 px-3 py-1 rounded-full text-slate-600">
+                                {portfolio.length} Active Loans
+                            </span>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left text-slate-600">
+                                <thead className="bg-slate-50 text-xs uppercase font-bold text-slate-500">
+                                    <tr>
+                                        <th className="px-6 py-3">Member</th>
+                                        <th className="px-6 py-3">Disbursed On</th>
+                                        <th className="px-6 py-3">Principal + Interest</th>
+                                        <th className="px-6 py-3">Amount Repaid</th>
+                                        <th className="px-6 py-3">Balance</th>
+                                        <th className="px-6 py-3 text-center">Progress</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {portfolio.map(loan => (
+                                        <tr key={loan.id} className="hover:bg-slate-50">
+                                            <td className="px-6 py-4 font-medium text-slate-900">{loan.full_name}</td>
+                                            <td className="px-6 py-4 text-xs text-slate-500">
+                                                {loan.disbursed_at ? new Date(loan.disbursed_at).toLocaleDateString() : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 font-bold text-slate-700">KES {parseFloat(loan.total_due).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-emerald-600 font-bold">KES {parseFloat(loan.amount_repaid).toLocaleString()}</td>
+                                            <td className="px-6 py-4 text-red-600 font-bold">KES {parseFloat(loan.outstanding_balance).toLocaleString()}</td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                                        <div className="h-full bg-indigo-500" style={{width: `${loan.progress}%`}}></div>
+                                                    </div>
+                                                    <span className="text-xs font-bold text-indigo-600">{loan.progress}%</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {portfolio.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}
