@@ -17,8 +17,14 @@ const registerSchema = Joi.object({
     password: Joi.string().min(6).required(),
     phoneNumber: Joi.string().pattern(/^[0-9]{10,15}$/).required(),
     role: Joi.string().valid('MEMBER', 'SECRETARY', 'TREASURER', 'ADMIN', 'LOAN_OFFICER', 'CHAIRPERSON').default('MEMBER'),
-    // NEW: Allow payment reference for registration fees
-    paymentRef: Joi.string().optional().allow('') 
+    paymentRef: Joi.string().optional().allow(''),
+    
+    // NEW: KYC Fields
+    idNumber: Joi.string().min(5).max(20).required(),
+    kraPin: Joi.string().optional().allow(''),
+    nextOfKinName: Joi.string().required(),
+    nextOfKinPhone: Joi.string().required(),
+    nextOfKinRelation: Joi.string().required()
 });
 
 const loginSchema = Joi.object({
@@ -52,6 +58,11 @@ const disburseSchema = Joi.object({
     loanId: Joi.number().integer().required()
 });
 
+// New: For manual penalty trigger
+const penaltySchema = Joi.object({
+    secretKey: Joi.string().required()
+});
+
 module.exports = { 
     validate, 
     registerSchema, 
@@ -60,5 +71,6 @@ module.exports = {
     paymentSchema,
     repaymentSchema, 
     tableLoanSchema,
-    disburseSchema
+    disburseSchema,
+    penaltySchema
 };
