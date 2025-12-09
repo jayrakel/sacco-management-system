@@ -20,6 +20,10 @@ VALUES
     ('loan_multiplier', '3', 'Loan limit multiplier', 'SACCO'),
     ('loan_processing_fee', '500', 'Processing fee (KES)', 'SACCO'),
     ('min_guarantors', '2', 'Min guarantors required', 'SACCO'),
+    ('category_welfare_amount', '0', 'Predefined welfare contribution (0=manual)', 'SACCO'),
+    ('category_penalty_amount', '0', 'Predefined penalty amount (0=manual)', 'SACCO'),
+    ('category_share_capital_amount', '0', 'Predefined share capital amount (0=manual)', 'SACCO'),
+    ('category_deposit_amount', '0', 'Predefined general deposit (0=manual)', 'SACCO'),
     ('fine_lateness_1h', '50', 'Fine < 1h late', 'SACCO'),
     ('fine_lateness_2h', '100', 'Fine 1-2h late', 'SACCO'),
     ('fine_lateness_3h', '200', 'Fine 3h+ late', 'SACCO'),
@@ -38,3 +42,17 @@ DO UPDATE SET
     setting_value = EXCLUDED.setting_value,
     description = EXCLUDED.description,
     category = EXCLUDED.category;
+
+-- Contribution Categories Table
+CREATE TABLE IF NOT EXISTS public.contribution_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) UNIQUE NOT NULL,
+    description TEXT,
+    amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Add amount column if it doesn't exist (for existing installations)
+ALTER TABLE IF EXISTS public.contribution_categories
+ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) DEFAULT 0;

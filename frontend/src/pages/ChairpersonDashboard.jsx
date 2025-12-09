@@ -39,7 +39,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
     const [paymentChannels, setPaymentChannels] = useState([]); 
     const [portfolio, setPortfolio] = useState([]); // NEW: Active Loans
     const [categories, setCategories] = useState([]);
-    const [newCat, setNewCat] = useState({ name: "", description: "" });
+    const [newCat, setNewCat] = useState({ name: "", description: "", amount: "" });
     
     // Report Data State
     const [reportData, setReportData] = useState(null);
@@ -316,7 +316,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
         setLoading(true);
         try {
             await api.post('/api/settings/categories', newCat);
-            setNewCat({ name: "", description: "" });
+            setNewCat({ name: "", description: "", amount: "" });
             // Refresh list
             const res = await api.get('/api/settings/categories');
             setCategories(res.data);
@@ -969,6 +969,14 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                         value={newCat.description}
                                         onChange={(e) => setNewCat({...newCat, description: e.target.value})}
                                     />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Default Amount (KES) - Optional" 
+                                        className="w-full border p-2 rounded-lg text-sm font-mono"
+                                        value={newCat.amount}
+                                        onChange={(e) => setNewCat({...newCat, amount: e.target.value})}
+                                        min="0"
+                                    />
                                     <button disabled={loading} className="bg-indigo-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-indigo-700 transition">
                                         {loading ? "Adding..." : "+ Add Category"}
                                     </button>
@@ -983,7 +991,7 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                                             <div key={cat.id} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
                                                 <div>
                                                     <p className="font-bold text-sm text-slate-800">{cat.description || cat.name}</p>
-                                                    <p className="text-xs text-slate-400 font-mono">Code: {cat.name}</p>
+                                                    <p className="text-xs text-slate-400 font-mono">Code: {cat.name} {cat.amount > 0 && `• Amount: KES ${parseFloat(cat.amount).toLocaleString()}`}</p>
                                                 </div>
                                                 <button onClick={() => handleDeleteCategory(cat.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
                                             </div>

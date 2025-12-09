@@ -62,6 +62,7 @@ router.get('/categories', authenticateUser, async (req, res) => {
         const result = await db.query("SELECT * FROM contribution_categories WHERE is_active = TRUE ORDER BY name ASC");
         res.json(result.rows);
     } catch (err) {
+        console.error("Failed to fetch categories:", err);
         res.status(500).json({ error: "Failed to fetch categories" });
     }
 });
@@ -70,20 +71,21 @@ router.get('/categories', authenticateUser, async (req, res) => {
 router.post('/categories', authenticateUser, async (req, res) => {
     if (!['ADMIN', 'CHAIRPERSON', 'TREASURER'].includes(req.user.role)) return res.status(403).json({ error: "Access Denied" });
     
-    const { name, description } = req.body;
+    const { name, description, amount } = req.body;
     try {
         // Uppercase, underscore format for consistency (e.g., "Buying Plot" -> "BUYING_PLOT")
-        // But for display friendly, we can keep original name or just store standard uppercase code
         const code = name.toUpperCase().replace(/\s+/g, '_');
+        const categoryAmount = parseFloat(amount) || 0;
         
         await db.query(
-            "INSERT INTO contribution_categories (name, description) VALUES ($1, $2)",
-            [code, description || name]
+            "INSERT INTO contribution_categories (name, description, amount) VALUES ($1, $2, $3)",
+            [code, description || name, categoryAmount]
         );
         res.json({ success: true, message: "Category created" });
     } catch (err) {
+        console.error("Failed to create category:", err);
         if(err.code === '23505') return res.status(400).json({ error: "Category already exists" });
-        res.status(500).json({ error: "Creation failed" });
+        res.status(500).json({ error: "Creation failed: " + err.message });
     }
 });
 
@@ -95,6 +97,7 @@ router.delete('/categories/:id', authenticateUser, async (req, res) => {
         await db.query("UPDATE contribution_categories SET is_active = FALSE WHERE id = $1", [req.params.id]);
         res.json({ success: true, message: "Category removed" });
     } catch (err) {
+        console.error("Failed to delete category:", err);
         res.status(500).json({ error: "Delete failed" });
     }
 });

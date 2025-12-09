@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
-    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield, List
+    Wallet, TrendingUp, Send, CheckCircle, PieChart, FileText, AlertCircle, FileWarning, Briefcase, DollarSign, Users, Clock, Shield, List, Settings, FolderPlus, Trash2
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
 
@@ -16,6 +16,10 @@ export default function TreasurerDashboard({ user, onLogout }) {
     const [pendingDeposits, setPendingDeposits] = useState([]); 
     const [portfolio, setPortfolio] = useState([]); // NEW: Active Loans
     
+    // Category Management
+    const [categories, setCategories] = useState([]);
+    const [newCat, setNewCat] = useState({ name: "", description: "", amount: "" });
+    
     // Financial Records
     const [deposits, setDeposits] = useState([]);
     const [transactions, setTransactions] = useState([]);
@@ -27,14 +31,16 @@ export default function TreasurerDashboard({ user, onLogout }) {
         const fetchData = async () => {
             try {
                 // 1. Fetch Queue, Basic Stats & Pending Deposits
-                const [qRes, sRes, depPendingRes] = await Promise.all([
+                const [qRes, sRes, depPendingRes, catRes] = await Promise.all([
                     api.get('/api/loan/treasury/queue'),
                     api.get('/api/loan/treasury/stats'),
-                    api.get('/api/payments/admin/deposits/pending') 
+                    api.get('/api/payments/admin/deposits/pending'),
+                    api.get('/api/settings/categories')
                 ]);
                 setQueue(qRes.data);
                 setStats(sRes.data);
                 setPendingDeposits(depPendingRes.data);
+                setCategories(catRes.data || []);
 
                 // 2. Fetch Full Financial History
                 const [resDeposits, resTrans] = await Promise.all([
@@ -120,6 +126,31 @@ export default function TreasurerDashboard({ user, onLogout }) {
             alert("Failed to update status"); 
         }
         setLoading(false);
+    };
+
+    const handleAddCategory = async (e) => {
+        e.preventDefault();
+        if(!newCat.name) return;
+        setLoading(true);
+        try {
+            await api.post('/api/settings/categories', newCat);
+            setNewCat({ name: "", description: "", amount: "" });
+            const res = await api.get('/api/settings/categories');
+            setCategories(res.data);
+            alert("Category Added!");
+        } catch(err) {
+            alert(err.response?.data?.error || "Failed");
+        }
+        setLoading(false);
+    };
+
+    const handleDeleteCategory = async (id) => {
+        if(!window.confirm("Are you sure? This hides the category from future deposits.")) return;
+        try {
+            await api.delete(`/api/settings/categories/${id}`);
+            const res = await api.get('/api/settings/categories');
+            setCategories(res.data);
+        } catch(err) { alert("Failed"); }
     };
 
     // --- HELPER COMPONENT ---
@@ -242,6 +273,12 @@ export default function TreasurerDashboard({ user, onLogout }) {
                             className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'finance' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
                             Financial Records
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('settings')} 
+                            className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold text-sm transition ${activeTab === 'settings' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <Settings size={16}/> Categories
                         </button>
                     </div>
                 </div>
@@ -490,6 +527,67 @@ export default function TreasurerDashboard({ user, onLogout }) {
                                     {portfolio.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-slate-400">No active loans found.</td></tr>}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* CATEGORY MANAGEMENT TAB */}
+                {activeTab === 'settings' && (
+                    <div className="max-w-4xl mx-auto animate-fade-in">
+                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                            <div className="flex items-center gap-3 mb-6 border-b pb-4">
+                                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><FolderPlus size={20}/></div>
+                                <h2 className="text-lg font-bold text-slate-800">Contribution Categories</h2>
+                            </div>
+
+                            <form onSubmit={handleAddCategory} className="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Create New Category</h3>
+                                <div className="grid grid-cols-1 gap-3">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Category Name (e.g. Welfare, Plot Project)" 
+                                        className="w-full border p-2 rounded-lg text-sm"
+                                        value={newCat.name}
+                                        onChange={(e) => setNewCat({...newCat, name: e.target.value})}
+                                        required
+                                    />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Short Description (Optional)" 
+                                        className="w-full border p-2 rounded-lg text-sm"
+                                        value={newCat.description}
+                                        onChange={(e) => setNewCat({...newCat, description: e.target.value})}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Default Amount (KES) - Optional" 
+                                        className="w-full border p-2 rounded-lg text-sm font-mono"
+                                        value={newCat.amount}
+                                        onChange={(e) => setNewCat({...newCat, amount: e.target.value})}
+                                        min="0"
+                                    />
+                                    <button disabled={loading} className="bg-indigo-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-indigo-700 transition">
+                                        {loading ? "Adding..." : "+ Add Category"}
+                                    </button>
+                                </div>
+                            </form>
+
+                            <div>
+                                <h3 className="text-xs font-bold text-slate-500 uppercase mb-3">Active Categories</h3>
+                                {categories.length === 0 ? <p className="text-sm text-slate-400 italic">No custom categories defined.</p> : (
+                                    <div className="space-y-2">
+                                        {categories.map(cat => (
+                                            <div key={cat.id} className="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                                                <div>
+                                                    <p className="font-bold text-sm text-slate-800">{cat.description || cat.name}</p>
+                                                    <p className="text-xs text-slate-400 font-mono">Code: {cat.name} {cat.amount > 0 && `• Amount: KES ${parseFloat(cat.amount).toLocaleString()}`}</p>
+                                                </div>
+                                                <button onClick={() => handleDeleteCategory(cat.id)} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}

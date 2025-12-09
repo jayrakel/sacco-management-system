@@ -27,7 +27,9 @@ export default function MemberDashboard({ user, onLogout }) {
 
   const [multiplier, setMultiplier] = useState(3); 
   const [logo, setLogo] = useState(null);
-  const [paymentChannels, setPaymentChannels] = useState([]); 
+  const [paymentChannels, setPaymentChannels] = useState([]);
+  const [loanProcessingFee, setLoanProcessingFee] = useState(0);
+  const [categoryAmounts, setCategoryAmounts] = useState({}); 
 
   const [loanForm, setLoanForm] = useState({ amount: "", purpose: "", repaymentWeeks: "" });
   
@@ -72,6 +74,7 @@ export default function MemberDashboard({ user, onLogout }) {
 
         // Settings
         let minWeekly = 250;
+        let amountsMap = {};
         if (Array.isArray(settingsRes.data)) {
           const multSetting = settingsRes.data.find(s => s.setting_key === "loan_multiplier");
           if (multSetting) setMultiplier(parseFloat(multSetting.setting_value));
@@ -81,6 +84,23 @@ export default function MemberDashboard({ user, onLogout }) {
           if (channels) setPaymentChannels(JSON.parse(channels.setting_value || '[]'));
           const minSetting = settingsRes.data.find(s => s.setting_key === "min_weekly_deposit");
           if (minSetting) minWeekly = parseFloat(minSetting.setting_value);
+          const feeSetting = settingsRes.data.find(s => s.setting_key === "loan_processing_fee");
+          if (feeSetting) setLoanProcessingFee(parseFloat(feeSetting.setting_value));
+          
+          // Extract category amounts
+          const welfareAmount = settingsRes.data.find(s => s.setting_key === "category_welfare_amount");
+          if (welfareAmount) amountsMap.WELFARE = parseFloat(welfareAmount.setting_value);
+          
+          const penaltyAmount = settingsRes.data.find(s => s.setting_key === "category_penalty_amount");
+          if (penaltyAmount) amountsMap.PENALTY = parseFloat(penaltyAmount.setting_value);
+          
+          const shareAmount = settingsRes.data.find(s => s.setting_key === "category_share_capital_amount");
+          if (shareAmount) amountsMap.SHARE_CAPITAL = parseFloat(shareAmount.setting_value);
+          
+          const depositAmount = settingsRes.data.find(s => s.setting_key === "category_deposit_amount");
+          if (depositAmount) amountsMap.DEPOSIT = parseFloat(depositAmount.setting_value);
+          
+          setCategoryAmounts(amountsMap);
         }
 
         // Weekly Progress
@@ -122,6 +142,44 @@ export default function MemberDashboard({ user, onLogout }) {
   }, [activeTab]);
 
   const showNotify = (type, msg) => { setToast({ type, msg }); setTimeout(() => setToast(null), 5000); };
+
+  // Auto-fill amount when category is selected
+  const handlePurposeChange = (e) => {
+      const value = e.target.value;
+      setDepositPurpose(value);
+      let amountToFill = "";
+
+      // 1. Check if it's a predefined category with amount in system settings
+      if (categoryAmounts[value] && categoryAmounts[value] > 0) {
+          amountToFill = categoryAmounts[value].toString();
+      }
+      
+      // 2. Check if it's a custom category with predefined amount
+      const category = customCategories.find(cat => cat.name === value);
+      if (category && category.amount > 0) {
+          amountToFill = category.amount.toString();
+      }
+      
+      // 3. Check if it's LOAN_REPAYMENT and user has active loan
+      if (value === 'LOAN_REPAYMENT' && loanState.status === 'ACTIVE') {
+          const weeklyInstallment = Math.ceil(loanState.schedule?.weekly_installment || 0);
+          if (weeklyInstallment > 0) {
+              amountToFill = weeklyInstallment.toString();
+          }
+      }
+
+      // 4. Check if it's LOAN_FORM_FEE (standard fee from system settings)
+      if (value === 'LOAN_FORM_FEE' && loanProcessingFee > 0) {
+          amountToFill = loanProcessingFee.toString();
+      }
+
+      // Update form with the calculated amount
+      if (amountToFill) {
+          setDepositForm({...depositForm, amount: amountToFill});
+      } else {
+          setDepositForm({...depositForm, amount: ""});
+      }
+  };
 
   // --- HANDLERS ---
   const handleMpesaDeposit = async (e) => { 
@@ -375,7 +433,7 @@ export default function MemberDashboard({ user, onLogout }) {
                     <select 
                         className="w-full border border-indigo-200 p-3 pl-10 rounded-xl bg-white font-bold text-indigo-900 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none cursor-pointer"
                         value={depositPurpose}
-                        onChange={(e) => setDepositPurpose(e.target.value)}
+                        onChange={handlePurposeChange}
                     >
                         {/* Default Options */}
                         <option value="DEPOSIT">Savings Deposit (General)</option>
@@ -398,9 +456,12 @@ export default function MemberDashboard({ user, onLogout }) {
                 </div>
                 
                 {/* Hints */}
-                {depositPurpose === 'LOAN_REPAYMENT' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Automatically targets your oldest active loan.</p>}
-                {depositPurpose === 'LOAN_FORM_FEE' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Pays the fee for your pending application.</p>}
-                {depositPurpose === 'SHARE_CAPITAL' && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Moves funds to your non-withdrawable shares.</p>}
+                {depositPurpose === 'LOAN_REPAYMENT' && loanState.status === 'ACTIVE' && <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> ✓ Weekly installment pre-filled: <span className="font-bold">KES {Math.ceil(loanState.schedule?.weekly_installment || 0).toLocaleString()}</span></p>}
+                {depositPurpose === 'LOAN_REPAYMENT' && loanState.status !== 'ACTIVE' && <p className="text-xs text-amber-600 mt-2 flex items-center gap-1"><AlertCircle size={12}/> You don't have an active loan. Enter amount manually.</p>}
+                {depositPurpose === 'LOAN_FORM_FEE' && loanProcessingFee > 0 && <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> ✓ Fee pre-filled: <span className="font-bold">KES {loanProcessingFee.toLocaleString()}</span></p>}
+                {depositPurpose === 'LOAN_FORM_FEE' && loanProcessingFee === 0 && <p className="text-xs text-indigo-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> Pays the fee for your pending application.</p>}
+                {(depositPurpose === 'WELFARE' || depositPurpose === 'PENALTY' || depositPurpose === 'SHARE_CAPITAL' || depositPurpose === 'DEPOSIT') && categoryAmounts[depositPurpose] > 0 && <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> ✓ Amount pre-filled: <span className="font-bold">KES {categoryAmounts[depositPurpose].toLocaleString()}</span></p>}
+                {depositPurpose !== 'DEPOSIT' && depositPurpose !== 'LOAN_REPAYMENT' && depositPurpose !== 'LOAN_FORM_FEE' && depositPurpose !== 'SHARE_CAPITAL' && depositPurpose !== 'WELFARE' && depositPurpose !== 'PENALTY' && depositForm.amount && customCategories.find(c => c.name === depositPurpose) && <p className="text-xs text-blue-600 mt-2 flex items-center gap-1"><CheckCircle size={12}/> ✓ Amount pre-filled: <span className="font-bold">KES {parseFloat(depositForm.amount).toLocaleString()}</span></p>}
             </div>
 
             <div className="flex gap-2 mb-6 border-b border-slate-100 pb-4 overflow-x-auto">
@@ -420,7 +481,20 @@ export default function MemberDashboard({ user, onLogout }) {
                         {mpesaMode === 'STK' ? (
                             <>
                                 <div className="bg-green-50 p-4 rounded-xl border border-green-100 mb-2"><p className="text-xs text-green-800 font-bold">STK Push</p><p className="text-[10px] text-green-600 mt-1">We will send a prompt to your phone.</p></div>
-                                <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amount (KES)</label><input type="number" required className="w-full border p-3 rounded-xl font-bold text-lg" value={depositForm.amount} onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })} /></div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center justify-between">
+                                        <span>Amount (KES)</span>
+                                        {depositForm.amount && depositPurpose !== 'DEPOSIT' && <span className="text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-1 rounded">Auto-filled</span>}
+                                    </label>
+                                    <input 
+                                        type="number" 
+                                        required 
+                                        className={`w-full border p-3 rounded-xl font-bold text-lg transition ${depositForm.amount && depositPurpose !== 'DEPOSIT' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-white border-slate-200'}`}
+                                        value={depositForm.amount} 
+                                        onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
+                                        placeholder="Enter amount"
+                                    />
+                                </div>
                                 <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">M-Pesa Phone</label><input type="tel" required className="w-full border p-3 rounded-xl" placeholder="2547..." value={depositForm.phoneNumber} onChange={(e) => setDepositForm({ ...depositForm, phoneNumber: e.target.value })} /></div>
                             </>
                         ) : (
@@ -445,7 +519,20 @@ export default function MemberDashboard({ user, onLogout }) {
                 <form onSubmit={handleBankDeposit} className="space-y-5">
                     <div className="bg-red-50 p-4 rounded-xl border border-red-100 mb-2"><p className="text-xs text-red-900 font-bold">Bank Accounts</p>{bankChannels.length === 0 ? <p className="text-xs text-red-600 italic">No bank accounts configured.</p> : <ul className="mt-2 space-y-2">{bankChannels.map((b, i) => (<li key={i} className="text-xs text-slate-700 bg-white p-2 rounded border border-red-100"><span className="font-bold">{b.name}:</span> <span className="font-mono">{b.account}</span><br/><span className="text-[10px] text-slate-500">{b.instructions}</span></li>))}</ul>}</div>
                     <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Select Bank</label><select className="w-full border p-3 rounded-xl bg-white" value={bankForm.bankName} onChange={(e) => setBankForm({...bankForm, bankName: e.target.value})}><option value="" disabled>-- Select Bank --</option>{bankChannels.map((b, i) => <option key={i} value={b.name}>{b.name}</option>)}</select></div>
-                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amount (KES)</label><input type="number" required className="w-full border p-3 rounded-xl font-bold text-lg" value={bankForm.amount} onChange={(e) => setBankForm({ ...bankForm, amount: e.target.value })} /></div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center justify-between">
+                            <span>Amount (KES)</span>
+                            {depositForm.amount && depositPurpose !== 'DEPOSIT' && <span className="text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-1 rounded">Auto-filled</span>}
+                        </label>
+                        <input 
+                            type="number" 
+                            required 
+                            className={`w-full border p-3 rounded-xl font-bold text-lg transition ${depositForm.amount && depositPurpose !== 'DEPOSIT' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-white border-slate-200'}`}
+                            value={depositForm.amount} 
+                            onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
+                            placeholder="Enter amount"
+                        />
+                    </div>
                     <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ref Code</label><input type="text" required className="w-full border p-3 rounded-xl font-mono uppercase" value={bankForm.reference} onChange={(e) => setBankForm({ ...bankForm, reference: e.target.value })} /></div>
                     <button disabled={loading} className="w-full bg-red-900 hover:bg-red-800 text-white py-4 rounded-xl font-bold transition">{loading ? "Submitting..." : "Submit for Verification"}</button>
                 </form>
@@ -454,7 +541,20 @@ export default function MemberDashboard({ user, onLogout }) {
             {depositMethod === 'PAYPAL' && (
                 <form onSubmit={handlePaypalDeposit} className="space-y-5">
                     <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-2"><p className="text-xs text-blue-900 font-bold">PayPal Info</p>{paypalChannels.length === 0 ? <p className="text-xs text-blue-600 italic">No PayPal accounts configured.</p> : <ul className="mt-2 space-y-2">{paypalChannels.map((p, i) => (<li key={i} className="text-xs text-slate-700 bg-white p-2 rounded border border-blue-100"><span className="font-bold">{p.name}:</span> <span className="font-mono">{p.account}</span><br/><span className="text-[10px] text-slate-500">{p.instructions}</span></li>))}</ul>}</div>
-                    <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Amount</label><input type="number" required className="w-full border p-3 rounded-xl font-bold text-lg" value={paypalForm.amount} onChange={(e) => setPaypalForm({ ...paypalForm, amount: e.target.value })} /></div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1 flex items-center justify-between">
+                            <span>Amount (KES)</span>
+                            {depositForm.amount && depositPurpose !== 'DEPOSIT' && <span className="text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-1 rounded">Auto-filled</span>}
+                        </label>
+                        <input 
+                            type="number" 
+                            required 
+                            className={`w-full border p-3 rounded-xl font-bold text-lg transition ${depositForm.amount && depositPurpose !== 'DEPOSIT' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-white border-slate-200'}`}
+                            value={depositForm.amount} 
+                            onChange={(e) => setDepositForm({ ...depositForm, amount: e.target.value })}
+                            placeholder="Enter amount"
+                        />
+                    </div>
                     <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Transaction ID</label><input type="text" required className="w-full border p-3 rounded-xl font-mono uppercase" value={paypalForm.reference} onChange={(e) => setPaypalForm({ ...paypalForm, reference: e.target.value })} /></div>
                     <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-bold transition">{loading ? "Submitting..." : "Submit for Verification"}</button>
                 </form>
