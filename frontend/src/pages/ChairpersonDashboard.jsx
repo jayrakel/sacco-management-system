@@ -121,12 +121,14 @@ export default function ChairpersonDashboard({ user, onLogout }) {
                     const res = await api.get('/api/loan/chair/agenda');
                     setAgenda(res.data || []);
                 } else if (activeTab === 'finance') {
-                    const [resDeposits, resTrans] = await Promise.all([
-                        api.get('/api/deposits/admin/all'),
-                        api.get('/api/payments/admin/all')
-                    ]);
-                    setDeposits(resDeposits.data || []);
-                    setTransactions(resTrans.data || []);
+                const [resDeposits, resTrans, resUsers] = await Promise.all([
+                    api.get('/api/deposits/admin/all'),
+                    api.get('/api/payments/admin/all'),
+                    api.get('/api/auth/users') // <--- Add this line
+                ]);
+                setDeposits(resDeposits.data || []);
+                setTransactions(resTrans.data || []);
+                setUsers(resUsers.data || []); // <--- Add this line
                 } else if (activeTab === 'reports') {
                     // Reports are handled by AdvancedReporting component, but we can fetch summary if needed
                     const resRep = await api.get('/api/reports/summary');
