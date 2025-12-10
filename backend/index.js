@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser'); 
 const bcrypt = require('bcrypt');
 const db = require('./db');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -36,6 +37,7 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser()); 
@@ -55,6 +57,7 @@ const dividendRoutes = require('./modules/dividends/routes');
 const advancedReportRoutes = require('./modules/reports/advanced.routes');
 const historyRoutes = require('./modules/management/history.routes');
 const routes = require('./modules/management/routes');
+const cmsRoutes = require('./modules/cms/routes');
 
 // --- NEW ASSET & EXPENSE ROUTES ---
 const router = express.Router();
@@ -107,7 +110,7 @@ app.use('/api/advanced-reports', apiLimiter, advancedReportRoutes);
 app.use('/api/management', apiLimiter, router); // Mount new routes under /management
 app.use('/api/management', apiLimiter, routes);
 app.use('/api/management/history', apiLimiter, historyRoutes);
-
+app.use('/api/cms', apiLimiter, cmsRoutes);
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).json({ error: "Internal System Error" });

@@ -13,6 +13,7 @@ import SetupUsers from './pages/SetupUsers';
 import ChangePassword from './pages/ChangePassword';
 import VerifyEmail from './pages/VerifyEmail'; 
 // import VerifyPhone from './pages/VerifyPhone'; // [MUTED]
+import GroupWebsite from './pages/GroupWebsite';
 
 import { Unauthorized, NotFound, ServerError } from './pages/ErrorPages';
 import api from './api';
@@ -82,7 +83,7 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/login" element={!user ? <Login setUser={setUser} /> : <Navigate to="/portal" />} />
-        <Route path="/" element={<Navigate to="/login" />} />
+        <Route path="/" element={<GroupWebsite />} />
         
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/portal/verify-email" element={<Navigate to="/verify-email" />} />
