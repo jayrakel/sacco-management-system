@@ -5,8 +5,8 @@ import {
     Download, PenTool, Edit2, X, Calendar 
 } from 'lucide-react';
 import jsPDF from 'jspdf';
-import ReactQuill from 'react-quill';
-import 'react-quill/dist/quill.snow.css'; // Essential for the editor to look right
+import ReactQuill from 'react-quill-new'; // UPDATED IMPORT
+import 'react-quill-new/dist/quill.snow.css'; // UPDATED CSS IMPORT
 
 export default function WebsiteManager() {
     // --- STATE MANAGEMENT ---
