@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../api';
 
+// Helper component to safely render HTML from ReactQuill
 const RichText = ({ content, className = "" }) => (
     <div className={`prose prose-slate max-w-none ${className}`} dangerouslySetInnerHTML={{ __html: content }} />
 );
@@ -54,6 +55,7 @@ export default function GroupWebsite() {
                         </div>
                         <div className="hidden md:flex gap-8 items-center text-sm font-bold text-slate-500">
                             <a href="#vision" className="hover:text-indigo-600 transition">Our Vision</a>
+                            <a href="#about" className="hover:text-indigo-600 transition">About Us</a>
                             <a href="#history" className="hover:text-indigo-600 transition">History</a>
                             <a href="#minutes" className="hover:text-indigo-600 transition">Downloads</a>
                             <Link to="/login" className="bg-slate-900 text-white px-6 py-2.5 rounded-full hover:bg-slate-800 transition shadow-lg shadow-slate-200">Member Portal</Link>
@@ -64,6 +66,7 @@ export default function GroupWebsite() {
 
             {/* 2. HERO SECTION */}
             <header className="relative bg-indigo-900 text-white py-32 overflow-hidden">
+                {/* Background Pattern */}
                 <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1521737604893-d14cc237f11d?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center opacity-10"></div>
                 <div className="absolute inset-0 bg-gradient-to-b from-indigo-900/90 to-indigo-900/50"></div>
                 
@@ -86,8 +89,8 @@ export default function GroupWebsite() {
                 </div>
             </header>
 
-            {/* 3. FOUNDING VISION (STYLED SECTION) */}
-            <section id="vision" className="py-24 bg-white">
+            {/* 3. FOUNDING VISION (5 Pillars) */}
+            <section id="vision" className="py-24 bg-white border-b border-slate-100">
                 <div className="max-w-6xl mx-auto px-6">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
                         
@@ -129,11 +132,26 @@ export default function GroupWebsite() {
                 </div>
             </section>
 
-            {/* 4. HISTORY TIMELINE */}
-            <section id="history" className="py-24 bg-slate-50 relative">
+             {/* 4. ABOUT SECTION (Dynamic Rich Text) */}
+             <section id="about" className="py-24 bg-slate-50">
+                <div className="max-w-4xl mx-auto px-6">
+                    <div className="text-center mb-10">
+                        <div className="inline-block p-3 bg-emerald-100 text-emerald-700 rounded-full mb-6"><Users size={32}/></div>
+                        <h2 className="text-3xl font-bold text-slate-900">About Us</h2>
+                    </div>
+                    
+                    <div className="bg-white p-8 md:p-12 rounded-3xl shadow-sm border border-slate-200">
+                        <RichText content={text.about_us_text || "<p class='text-center text-slate-500 italic'>Admin has not added the 'About Us' content yet.</p>"} className="text-lg text-slate-600 leading-relaxed space-y-4" />
+                    </div>
+                </div>
+            </section>
+
+            {/* 5. HISTORY TIMELINE (Dynamic Rich Text) */}
+            <section id="history" className="py-24 bg-white relative">
                 <div className="max-w-4xl mx-auto px-6">
                     <div className="text-center mb-16">
-                        <h2 className="text-3xl font-bold text-slate-900">Our Journey Through Time</h2>
+                        <div className="inline-block p-3 bg-indigo-100 text-indigo-700 rounded-full mb-4"><History size={32}/></div>
+                        <h2 className="text-3xl font-bold text-slate-900">Our Journey</h2>
                         <p className="text-slate-500 mt-2">Milestones that define who we are.</p>
                     </div>
                     
@@ -143,39 +161,42 @@ export default function GroupWebsite() {
                         <div className="absolute left-4 h-full w-0.5 bg-slate-200 md:hidden"></div>
 
                         <div className="space-y-12">
-                            {history.map((event, idx) => (
-                                <div key={event.id} className={`relative flex items-center md:justify-between ${idx % 2 === 0 ? 'md:flex-row' : 'md:flex-row-reverse'}`}>
-                                    
-                                    {/* Spacer for alternate side */}
-                                    <div className="hidden md:block w-5/12"></div>
+                            {history.length === 0 ? (
+                                <div className="text-center text-slate-400 italic">No historical events recorded yet.</div>
+                            ) : (
+                                history.map((event, idx) => (
+                                    <div key={event.id} className={`relative flex items-center md:justify-between ${idx % 2 === 0 ? 'md:flex-row' : 'md:flex-row-reverse'}`}>
+                                        
+                                        {/* Spacer for alternate side */}
+                                        <div className="hidden md:block w-5/12"></div>
 
-                                    {/* Dot */}
-                                    <div className="absolute left-4 md:left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-indigo-600 ring-4 ring-white shadow-sm z-10 mt-1.5 md:mt-0"></div>
+                                        {/* Dot */}
+                                        <div className="absolute left-4 md:left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-indigo-600 ring-4 ring-white shadow-sm z-10 mt-1.5 md:mt-0"></div>
 
-                                    {/* Card */}
-                                    <div className="w-full md:w-5/12 pl-12 md:pl-0">
-                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
-                                            <span className="text-indigo-500 font-bold text-sm tracking-wider font-mono">
-                                                {new Date(event.event_date).getFullYear()}
-                                            </span>
-                                            <h3 className="text-xl font-bold text-slate-800 mt-1 mb-2">{event.event_title}</h3>
-                                            <p className="text-slate-600 text-sm leading-relaxed">{event.description}</p>
+                                        {/* Card */}
+                                        <div className="w-full md:w-5/12 pl-12 md:pl-0">
+                                            <div className="bg-slate-50 p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition group">
+                                                <span className="text-indigo-500 font-bold text-sm tracking-wider font-mono block mb-2">
+                                                    {new Date(event.event_date).getFullYear()}
+                                                </span>
+                                                <h3 className="text-xl font-bold text-slate-800 mb-3">{event.event_title}</h3>
+                                                
+                                                {/* Rich Text Description */}
+                                                <RichText content={event.description} className="text-sm text-slate-600" />
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
-                            {history.length === 0 && (
-                                <div className="text-center text-slate-400 italic">No historical events recorded yet.</div>
+                                ))
                             )}
                         </div>
                     </div>
                 </div>
             </section>
 
-            {/* 5. MINUTES DOWNLOADS */}
-            <section id="minutes" className="py-24 bg-white">
+            {/* 6. MINUTES DOWNLOADS */}
+            <section id="minutes" className="py-24 bg-slate-50">
                 <div className="max-w-4xl mx-auto px-6">
-                    <div className="flex flex-col md:flex-row justify-between items-end mb-10 border-b border-slate-100 pb-6 gap-4">
+                    <div className="flex flex-col md:flex-row justify-between items-end mb-10 border-b border-slate-200 pb-6 gap-4">
                         <div>
                             <h2 className="text-3xl font-bold text-slate-900">Meeting Archive</h2>
                             <p className="text-slate-500 mt-2">Access official records and minutes.</p>
@@ -184,13 +205,13 @@ export default function GroupWebsite() {
                     
                     <div className="grid gap-4">
                         {minutes.length === 0 ? (
-                            <div className="p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                            <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-slate-300">
                                 <History className="mx-auto text-slate-300 mb-3" size={48} />
                                 <p className="text-slate-400">No documents available yet.</p>
                             </div>
                         ) : (
                             minutes.map(doc => (
-                                <div key={doc.id} className="group flex items-center justify-between p-5 bg-white border border-slate-100 rounded-xl hover:border-indigo-100 hover:shadow-md transition">
+                                <div key={doc.id} className="group flex items-center justify-between p-5 bg-white border border-slate-200 rounded-xl hover:border-indigo-300 hover:shadow-md transition">
                                     <div className="flex items-center gap-4">
                                         <div className="h-12 w-12 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition">
                                             <History size={24}/>
@@ -221,7 +242,7 @@ export default function GroupWebsite() {
                 </div>
             </section>
 
-            {/* 6. FOOTER */}
+            {/* 7. FOOTER */}
             <footer className="bg-slate-900 text-slate-400 py-16 border-t border-slate-800">
                 <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-12 mb-12">
                     <div>
@@ -234,6 +255,7 @@ export default function GroupWebsite() {
                         <h4 className="text-white font-bold text-lg mb-4">Quick Links</h4>
                         <ul className="space-y-2 text-sm">
                             <li><a href="#vision" className="hover:text-white transition">Our Vision</a></li>
+                            <li><a href="#about" className="hover:text-white transition">About Us</a></li>
                             <li><a href="#history" className="hover:text-white transition">History</a></li>
                             <li><Link to="/login" className="hover:text-white transition">Member Login</Link></li>
                         </ul>
