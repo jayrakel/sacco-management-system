@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, History, Users, ArrowRight, Menu } from 'lucide-react';
+import { 
+    Download, History, Users, ArrowRight, 
+    PiggyBank, HandCoins, HeartHandshake, TrendingUp, Quote 
+} from 'lucide-react';
 import api from '../api';
+
+const RichText = ({ content, className = "" }) => (
+    <div className={`prose prose-slate max-w-none ${className}`} dangerouslySetInnerHTML={{ __html: content }} />
+);
 
 export default function GroupWebsite() {
     const [data, setData] = useState({ text: {}, history: [], minutes: [] });
@@ -13,96 +20,232 @@ export default function GroupWebsite() {
            .catch(err => { console.error(err); setLoading(false); });
     }, []);
 
-    if(loading) return <div className="min-h-screen flex items-center justify-center">Loading Website...</div>;
+    if(loading) return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+            <div className="animate-pulse flex flex-col items-center">
+                <div className="h-12 w-12 bg-indigo-200 rounded-full mb-4"></div>
+                <div className="h-4 w-32 bg-indigo-100 rounded"></div>
+            </div>
+        </div>
+    );
 
     const { text, history, minutes } = data;
 
+    // --- STATIC CONTENT FOR FOUNDING VISION ---
+    const pillars = [
+        { title: "Unity", desc: "Building a community that supports its own.", icon: <Users size={24} /> },
+        { title: "Savings Culture", desc: "Encouraging consistent, disciplined saving.", icon: <PiggyBank size={24} /> },
+        { title: "Affordable Credit", desc: "Providing members with fair, accessible loans.", icon: <HandCoins size={24} /> },
+        { title: "Welfare Support", desc: "Ensuring no member faces hardship alone.", icon: <HeartHandshake size={24} /> },
+        { title: "Growth & Empowerment", desc: "Supporting financial independence and ventures.", icon: <TrendingUp size={24} /> }
+    ];
+
     return (
-        <div className="font-sans text-slate-800">
-            {/* NAVIGATION */}
-            <nav className="bg-white border-b sticky top-0 z-50">
+        <div className="font-sans text-slate-800 scroll-smooth">
+            {/* 1. NAVIGATION */}
+            <nav className="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between h-16 items-center">
-                        <div className="font-bold text-2xl text-indigo-900 tracking-tight">BetterLink Group</div>
-                        <div className="hidden md:flex gap-8 items-center text-sm font-medium text-slate-600">
-                            <a href="#about" className="hover:text-indigo-600">About Us</a>
-                            <a href="#history" className="hover:text-indigo-600">Our History</a>
-                            <a href="#minutes" className="hover:text-indigo-600">Downloads</a>
-                            <Link to="/login" className="bg-indigo-600 text-white px-5 py-2 rounded-full hover:bg-indigo-700 transition">Member Portal</Link>
+                    <div className="flex justify-between h-20 items-center">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-indigo-600 text-white p-2 rounded-lg">
+                                <Users size={24} />
+                            </div>
+                            <span className="font-bold text-xl tracking-tight text-slate-900">BetterLink Group</span>
+                        </div>
+                        <div className="hidden md:flex gap-8 items-center text-sm font-bold text-slate-500">
+                            <a href="#vision" className="hover:text-indigo-600 transition">Our Vision</a>
+                            <a href="#history" className="hover:text-indigo-600 transition">History</a>
+                            <a href="#minutes" className="hover:text-indigo-600 transition">Downloads</a>
+                            <Link to="/login" className="bg-slate-900 text-white px-6 py-2.5 rounded-full hover:bg-slate-800 transition shadow-lg shadow-slate-200">Member Portal</Link>
                         </div>
                     </div>
                 </div>
             </nav>
 
-            {/* HERO SECTION */}
-            <header className="bg-indigo-900 text-white py-24 text-center px-4">
-                <h1 className="text-4xl md:text-6xl font-extrabold mb-6 tracking-tight">{text.hero_title || "Empowering Our Community Together"}</h1>
-                <p className="text-indigo-200 text-lg md:text-xl max-w-2xl mx-auto mb-10">{text.welcome_message || "Welcome to the official digital home of our investment group. Transparency, Growth, and Unity."}</p>
-                <Link to="/login" className="inline-flex items-center gap-2 bg-white text-indigo-900 px-8 py-3 rounded-full font-bold hover:bg-indigo-50 transition">Access Member Dashboard <ArrowRight size={20}/></Link>
+            {/* 2. HERO SECTION */}
+            <header className="relative bg-indigo-900 text-white py-32 overflow-hidden">
+                <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1521737604893-d14cc237f11d?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center opacity-10"></div>
+                <div className="absolute inset-0 bg-gradient-to-b from-indigo-900/90 to-indigo-900/50"></div>
+                
+                <div className="relative max-w-4xl mx-auto px-6 text-center">
+                    <span className="inline-block py-1 px-3 rounded-full bg-indigo-800 border border-indigo-700 text-indigo-300 text-xs font-bold uppercase tracking-wider mb-6">Established 2005</span>
+                    <h1 className="text-5xl md:text-7xl font-extrabold mb-8 tracking-tight leading-tight">
+                        {text.hero_title || "Empowering Our Community Together"}
+                    </h1>
+                    <p className="text-indigo-100 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed opacity-90">
+                        {text.welcome_message || "Welcome to the official digital home of our investment group. Transparency, Growth, and Unity."}
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                        <Link to="/login" className="inline-flex items-center justify-center gap-2 bg-white text-indigo-900 px-8 py-4 rounded-full font-bold hover:bg-indigo-50 transition shadow-xl">
+                            Access Dashboard <ArrowRight size={20}/>
+                        </Link>
+                        <a href="#vision" className="inline-flex items-center justify-center gap-2 bg-indigo-800/50 backdrop-blur-sm text-white border border-indigo-700 px-8 py-4 rounded-full font-bold hover:bg-indigo-800 transition">
+                            Read Our Story
+                        </a>
+                    </div>
+                </div>
             </header>
 
-            {/* ABOUT SECTION */}
-            <section id="about" className="py-20 bg-white">
-                <div className="max-w-4xl mx-auto px-6 text-center">
-                    <div className="inline-block p-3 bg-emerald-100 text-emerald-700 rounded-full mb-6"><Users size={32}/></div>
-                    <h2 className="text-3xl font-bold mb-6">About Us</h2>
-                    <p className="text-slate-600 leading-relaxed text-lg whitespace-pre-line">
-                        {text.about_us_text || "We are a dedicated group of individuals committed to financial growth and mutual support. Founded on principles of trust..."}
-                    </p>
+            {/* 3. FOUNDING VISION (STYLED SECTION) */}
+            <section id="vision" className="py-24 bg-white">
+                <div className="max-w-6xl mx-auto px-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+                        
+                        {/* Narrative Side */}
+                        <div className="space-y-8">
+                            <div className="inline-flex items-center gap-2 text-indigo-600 font-bold uppercase text-xs tracking-widest">
+                                <span className="w-8 h-0.5 bg-indigo-600"></span> The Beginning
+                            </div>
+                            <h2 className="text-4xl font-bold text-slate-900 leading-tight">
+                                On the afternoon of <span className="text-indigo-600">January 2005</span>...
+                            </h2>
+                            <div className="text-lg text-slate-600 leading-relaxed space-y-6">
+                                <p>
+                                    Twelve individuals met with a singular, shared aspiration that would lay the foundation for everything we have built today.
+                                </p>
+                                <blockquote className="relative p-6 bg-slate-50 border-l-4 border-indigo-500 rounded-r-xl italic text-slate-700 font-medium">
+                                    <Quote className="absolute top-2 right-4 text-slate-200 opacity-50" size={40} />
+                                    “To uplift each other through disciplined savings, shared knowledge, and mutual support.”
+                                </blockquote>
+                                <p>
+                                    From that first meeting, a clear vision emerged, anchored by five unshakeable pillars that continue to guide our journey.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Pillars Grid Side */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {pillars.map((pillar, idx) => (
+                                <div key={idx} className={`p-6 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition hover:-translate-y-1 bg-white ${idx === 4 ? 'sm:col-span-2 bg-gradient-to-r from-indigo-50 to-white' : ''}`}>
+                                    <div className="h-10 w-10 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center mb-4">
+                                        {pillar.icon}
+                                    </div>
+                                    <h3 className="font-bold text-slate-900 mb-2">{pillar.title}</h3>
+                                    <p className="text-sm text-slate-500 leading-relaxed">{pillar.desc}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </section>
 
-            {/* HISTORY TIMELINE */}
-            <section id="history" className="py-20 bg-slate-50">
-                <div className="max-w-5xl mx-auto px-6">
+            {/* 4. HISTORY TIMELINE */}
+            <section id="history" className="py-24 bg-slate-50 relative">
+                <div className="max-w-4xl mx-auto px-6">
                     <div className="text-center mb-16">
-                        <div className="inline-block p-3 bg-indigo-100 text-indigo-700 rounded-full mb-4"><History size={32}/></div>
-                        <h2 className="text-3xl font-bold">Our Journey</h2>
-                        <p className="text-slate-500">Milestones that define who we are.</p>
+                        <h2 className="text-3xl font-bold text-slate-900">Our Journey Through Time</h2>
+                        <p className="text-slate-500 mt-2">Milestones that define who we are.</p>
                     </div>
                     
-                    <div className="space-y-8 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
-                        {history.map((event, idx) => (
-                            <div key={event.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                                <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-300 group-hover:bg-indigo-600 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2"></div>
-                                <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                                    <time className="font-caveat font-bold text-indigo-500">{new Date(event.event_date).getFullYear()}</time>
-                                    <h3 className="text-lg font-bold text-slate-800">{event.event_title}</h3>
-                                    <p className="text-slate-500 text-sm mt-2">{event.description}</p>
+                    <div className="relative">
+                        {/* Vertical Line */}
+                        <div className="absolute left-4 md:left-1/2 h-full w-0.5 bg-slate-200 -translate-x-1/2 hidden md:block"></div>
+                        <div className="absolute left-4 h-full w-0.5 bg-slate-200 md:hidden"></div>
+
+                        <div className="space-y-12">
+                            {history.map((event, idx) => (
+                                <div key={event.id} className={`relative flex items-center md:justify-between ${idx % 2 === 0 ? 'md:flex-row' : 'md:flex-row-reverse'}`}>
+                                    
+                                    {/* Spacer for alternate side */}
+                                    <div className="hidden md:block w-5/12"></div>
+
+                                    {/* Dot */}
+                                    <div className="absolute left-4 md:left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-indigo-600 ring-4 ring-white shadow-sm z-10 mt-1.5 md:mt-0"></div>
+
+                                    {/* Card */}
+                                    <div className="w-full md:w-5/12 pl-12 md:pl-0">
+                                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition">
+                                            <span className="text-indigo-500 font-bold text-sm tracking-wider font-mono">
+                                                {new Date(event.event_date).getFullYear()}
+                                            </span>
+                                            <h3 className="text-xl font-bold text-slate-800 mt-1 mb-2">{event.event_title}</h3>
+                                            <p className="text-slate-600 text-sm leading-relaxed">{event.description}</p>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))}
+                            {history.length === 0 && (
+                                <div className="text-center text-slate-400 italic">No historical events recorded yet.</div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </section>
 
-            {/* MINUTES DOWNLOADS */}
-            <section id="minutes" className="py-20 bg-white">
+            {/* 5. MINUTES DOWNLOADS */}
+            <section id="minutes" className="py-24 bg-white">
                 <div className="max-w-4xl mx-auto px-6">
-                    <h2 className="text-3xl font-bold mb-10 text-center">Meeting Minutes Archive</h2>
+                    <div className="flex flex-col md:flex-row justify-between items-end mb-10 border-b border-slate-100 pb-6 gap-4">
+                        <div>
+                            <h2 className="text-3xl font-bold text-slate-900">Meeting Archive</h2>
+                            <p className="text-slate-500 mt-2">Access official records and minutes.</p>
+                        </div>
+                    </div>
+                    
                     <div className="grid gap-4">
-                        {minutes.length === 0 ? <p className="text-center text-slate-400">No documents available yet.</p> : 
-                        minutes.map(doc => (
-                            <div key={doc.id} className="flex flex-col sm:flex-row justify-between items-center p-6 bg-slate-50 hover:bg-slate-100 rounded-2xl transition border border-slate-100">
-                                <div className="mb-4 sm:mb-0">
-                                    <h4 className="font-bold text-lg text-slate-800">{doc.title}</h4>
-                                    <p className="text-sm text-slate-500">Date Held: {new Date(doc.meeting_date).toLocaleDateString()}</p>
-                                </div>
-                                <a 
-                                    href={`http://localhost:5000${doc.file_path}`} 
-                                    download
-                                    className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200"
-                                >
-                                    <Download size={18}/> Download PDF
-                                </a>
+                        {minutes.length === 0 ? (
+                            <div className="p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                                <History className="mx-auto text-slate-300 mb-3" size={48} />
+                                <p className="text-slate-400">No documents available yet.</p>
                             </div>
-                        ))}
+                        ) : (
+                            minutes.map(doc => (
+                                <div key={doc.id} className="group flex items-center justify-between p-5 bg-white border border-slate-100 rounded-xl hover:border-indigo-100 hover:shadow-md transition">
+                                    <div className="flex items-center gap-4">
+                                        <div className="h-12 w-12 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition">
+                                            <History size={24}/>
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-slate-800 group-hover:text-indigo-600 transition">{doc.title}</h4>
+                                            <p className="text-sm text-slate-400">Date Held: {new Date(doc.meeting_date).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    <a 
+                                        href={`http://localhost:5000${doc.file_path}`} 
+                                        download
+                                        className="hidden sm:flex items-center gap-2 text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-lg hover:bg-indigo-100 transition"
+                                    >
+                                        <Download size={16}/> Download
+                                    </a>
+                                    <a 
+                                        href={`http://localhost:5000${doc.file_path}`} 
+                                        download
+                                        className="sm:hidden p-2 text-indigo-600 bg-indigo-50 rounded-lg"
+                                    >
+                                        <Download size={20}/>
+                                    </a>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             </section>
 
-            <footer className="bg-slate-900 text-slate-400 py-12 text-center">
-                <p>&copy; {new Date().getFullYear()} BetterLink Group. All rights reserved.</p>
+            {/* 6. FOOTER */}
+            <footer className="bg-slate-900 text-slate-400 py-16 border-t border-slate-800">
+                <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-12 mb-12">
+                    <div>
+                        <h4 className="text-white font-bold text-lg mb-4">BetterLink Group</h4>
+                        <p className="text-sm leading-relaxed opacity-80">
+                            Empowering our members through unity and financial growth since 2005.
+                        </p>
+                    </div>
+                    <div>
+                        <h4 className="text-white font-bold text-lg mb-4">Quick Links</h4>
+                        <ul className="space-y-2 text-sm">
+                            <li><a href="#vision" className="hover:text-white transition">Our Vision</a></li>
+                            <li><a href="#history" className="hover:text-white transition">History</a></li>
+                            <li><Link to="/login" className="hover:text-white transition">Member Login</Link></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 className="text-white font-bold text-lg mb-4">Contact</h4>
+                        <p className="text-sm opacity-80">info@betterlinkgroup.com</p>
+                    </div>
+                </div>
+                <div className="text-center pt-8 border-t border-slate-800 text-xs opacity-60">
+                    <p>&copy; {new Date().getFullYear()} BetterLink Group. All rights reserved.</p>
+                </div>
             </footer>
         </div>
     );

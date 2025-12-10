@@ -2,14 +2,15 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { 
     ClipboardList, CheckCircle, FileText, Megaphone, 
-    BarChart3, XCircle, Calendar, Clock, List,
+    BarChart3, XCircle, Calendar, Clock, List, Globe,
     Landmark, Receipt // Added for Assets & Expenses
 } from 'lucide-react';
 import DashboardHeader from '../components/DashboardHeader';
+import WebsiteManager from '../components/WebsiteManager';
 
 export default function SecretaryDashboard({ user, onLogout }) {
     // Tabs: 'review', 'meetings', 'portfolio', 'assets', 'expenses'
-    const [activeTab, setActiveTab] = useState('review');
+    const [activeTab, setActiveTab] = useState('review', 'minutes');
     
     // Data States
     const [reviewQueue, setReviewQueue] = useState([]); // Loans waiting to be tabled
@@ -27,6 +28,7 @@ export default function SecretaryDashboard({ user, onLogout }) {
 
     const [loading, setLoading] = useState(false);
     const [refreshKey, setRefreshKey] = useState(0);
+    
 
     // Fetch Data
     useEffect(() => {
@@ -166,6 +168,10 @@ export default function SecretaryDashboard({ user, onLogout }) {
                         {/* New Buttons */}
                         {renderTabButton('assets', 'Assets', <Landmark size={16}/>)}
                         {renderTabButton('expenses', 'Expenses', <Receipt size={16}/>)}
+                        {renderTabButton('website', 'Website & Minutes', <ClipboardList size={16}/>)}
+                        {/* <button onClick={() => setActiveTab('website')} className={`px-4 py-2 rounded-lg ${activeTab === 'website' ? 'bg-indigo-600 text-white' : 'bg-white'}`}>
+                        Website & Minutes
+                    </button> */}
                     </div>
                 </div>
 
@@ -469,6 +475,16 @@ export default function SecretaryDashboard({ user, onLogout }) {
                                 </table>
                             </div>
                         </div>
+                    </div>
+                )}
+                {activeTab === 'website' && (
+                    <div className="animate-fade-in">
+                        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6">
+                            <p className="text-sm text-blue-700">
+                                <strong>Note:</strong> Files uploaded here will be publicly visible on the group website immediately.
+                            </p>
+                        </div>
+                        <WebsiteManager />
                     </div>
                 )}
 

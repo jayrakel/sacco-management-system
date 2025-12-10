@@ -13,8 +13,10 @@ import {
   Save,
   X,
   Trash2,
+  Globe,
 } from "lucide-react";
 import DashboardHeader from "../components/DashboardHeader";
+import WebsiteManager from '../components/WebsiteManager';
 
 export default function AdminDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState("users");
@@ -219,6 +221,7 @@ export default function AdminDashboard({ user, onLogout }) {
                 "System Branding",
                 <Settings size={16} />
               )}
+              {renderTabButton("website", "Website & Minutes", <Globe size={16} />)} {/* <--- NEW TAB */}
               {renderTabButton("register", "New User", <UserPlus size={16} />)}
             </div>
           </div>
@@ -382,6 +385,7 @@ export default function AdminDashboard({ user, onLogout }) {
             </div>
           </div>
         )}
+        {activeTab === "website" && <WebsiteManager />} {/* <--- NEW CONTENT */}
 
         {/* 3. REGISTER TAB */}
         {activeTab === "register" && (
