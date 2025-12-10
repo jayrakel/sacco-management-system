@@ -8,10 +8,9 @@ const Joi = require('joi');
 const axios = require('axios');
 
 // Validation for Manual Recording (Admin)
-// Removed strict .valid() list to allow dynamic custom categories
 const recordTransactionSchema = Joi.object({
     userId: Joi.number().required(),
-    type: Joi.string().required(), // Changed to allow dynamic strings
+    type: Joi.string().required(),
     amount: Joi.number().positive().required(),
     description: Joi.string().optional().allow(''),
     reference: Joi.string().optional().allow('', null) 
@@ -23,42 +22,50 @@ const recordTransactionSchema = Joi.object({
 // ==========================================
 const processCompletedTransaction = async (client, transaction) => {
     const { id, user_id, type, amount, reference_code } = transaction;
-    console.log(`[Router] Processing: ${type} for User ${user_id} - KES ${amount}`);
+    
+    // SAFEGUARDS
+    const safeType = type || 'DEPOSIT'; // Handle null type
+    const safeRef = reference_code.substring(0, 40); // Ensure ref fits in deposits table (50 chars max including prefix)
+    
+    console.log(`[Router] Processing: ${safeType} for User ${user_id} - KES ${amount}`);
 
     // STEP 1: ALWAYS CREDIT GENERAL DEPOSIT ACCOUNT FIRST
-    const depositRef = `DEP-${reference_code}`;
+    const depositRef = `DEP-${safeRef}`;
     await client.query(
         `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
          VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', $4)
          ON CONFLICT (transaction_ref) DO NOTHING`, 
-        [user_id, amount, depositRef, `Incoming Funds: ${type}`]
+        [user_id, amount, depositRef, `Incoming Funds: ${safeType}`]
     );
 
     // If purpose is purely Savings (DEPOSIT), stop here.
-    if (type === 'DEPOSIT') {
+    if (safeType === 'DEPOSIT') {
         console.log(`[Router] Funds retained in General Savings.`);
         return;
     }
 
     // STEP 2: DEDUCT FROM GENERAL ACCOUNT (ROUTING)
-    const transferRef = `TRF-${reference_code}`;
+    const transferRef = `TRF-${safeRef}`;
+    // Use ON CONFLICT DO NOTHING to prevent crashes if run multiple times
     await client.query(
         `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-         VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', $4)`,
-        [user_id, -amount, transferRef, `Transfer to: ${type.replace(/_/g, ' ')}`]
+         VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', $4)
+         ON CONFLICT (transaction_ref) DO NOTHING`,
+        [user_id, -amount, transferRef, `Transfer to: ${safeType.replace(/_/g, ' ')}`]
     );
 
     // STEP 3: CREDIT TARGET ACCOUNT (Logic Branch)
-    console.log(`[Router] Routing funds to ${type}...`);
+    console.log(`[Router] Routing funds to ${safeType}...`);
 
-    if (type === 'SHARE_CAPITAL') {
+    if (safeType === 'SHARE_CAPITAL') {
         await client.query(
             `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-             VALUES ($1, $2, 'SHARE_CAPITAL', $3, 'COMPLETED', 'Purchase of Shares')`,
-            [user_id, amount, reference_code]
+             VALUES ($1, $2, 'SHARE_CAPITAL', $3, 'COMPLETED', 'Purchase of Shares')
+             ON CONFLICT (transaction_ref) DO NOTHING`, // Prevent duplicate error
+            [user_id, amount, safeRef]
         );
     } 
-    else if (type === 'LOAN_REPAYMENT') {
+    else if (safeType === 'LOAN_REPAYMENT') {
         const loanRes = await client.query(
             "SELECT id, amount_repaid, total_due, amount_requested FROM loan_applications WHERE user_id = $1 AND status = 'ACTIVE' ORDER BY created_at ASC LIMIT 1",
             [user_id]
@@ -79,12 +86,13 @@ const processCompletedTransaction = async (client, transaction) => {
             console.log("[Router] No active loan found. Refunding to Savings.");
             await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Active Loan Found')`,
-                [user_id, amount, `RFD-${reference_code}`]
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Active Loan Found')
+                 ON CONFLICT (transaction_ref) DO NOTHING`,
+                [user_id, amount, `RFD-${safeRef}`]
             );
         }
     }
-    else if (type === 'LOAN_FORM_FEE' || type === 'FEE_PAYMENT') {
+    else if (safeType === 'LOAN_FORM_FEE' || safeType === 'FEE_PAYMENT') {
         const loanRes = await client.query(
             "SELECT id FROM loan_applications WHERE user_id = $1 AND status = 'FEE_PENDING' ORDER BY created_at DESC LIMIT 1",
             [user_id]
@@ -92,40 +100,43 @@ const processCompletedTransaction = async (client, transaction) => {
         if (loanRes.rows.length > 0) {
             await client.query(
                 "UPDATE loan_applications SET status = 'FEE_PAID', fee_transaction_ref = $1, fee_amount = $2 WHERE id = $3",
-                [reference_code, amount, loanRes.rows[0].id]
+                [safeRef, amount, loanRes.rows[0].id]
             );
         } else {
              await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Pending Fee Found')`,
-                [user_id, amount, `RFD-${reference_code}`]
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: No Pending Fee Found')
+                 ON CONFLICT (transaction_ref) DO NOTHING`,
+                [user_id, amount, `RFD-${safeRef}`]
             );
         }
     }
-    else if (type === 'PENALTY' || type === 'FINE') {
+    else if (safeType === 'PENALTY' || safeType === 'FINE') {
         console.log("[Router] Penalty payment absorbed.");
     }
     else {
         // --- DYNAMIC CATEGORY HANDLER ---
         // Check if this type exists in our custom categories table
-        const catCheck = await client.query("SELECT name, description FROM contribution_categories WHERE name = $1 AND is_active = TRUE", [type]);
+        const catCheck = await client.query("SELECT name, description FROM contribution_categories WHERE name = $1 AND is_active = TRUE", [safeType]);
         
         if (catCheck.rows.length > 0) {
             const category = catCheck.rows[0];
             // Credit the custom bucket (stored in deposits with the custom TYPE)
             await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-                 VALUES ($1, $2, $3, $4, 'COMPLETED', $5)`,
-                [user_id, amount, type, reference_code, `Contribution: ${category.description}`]
+                 VALUES ($1, $2, $3, $4, 'COMPLETED', $5)
+                 ON CONFLICT (transaction_ref) DO NOTHING`,
+                [user_id, amount, safeType, safeRef, `Contribution: ${category.description}`]
             );
             console.log(`[Router] Routed to Custom Category: ${category.name}`);
         } else {
-            console.warn(`[Router] Unknown type ${type}. Refunding to General Savings.`);
+            console.warn(`[Router] Unknown type ${safeType}. Refunding to General Savings.`);
             // Refund the debit we just made in Step 2
              await client.query(
                 `INSERT INTO deposits (user_id, amount, type, transaction_ref, status, description) 
-                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: Unknown Category')`,
-                [user_id, amount, `RFD-${reference_code}`]
+                 VALUES ($1, $2, 'DEPOSIT', $3, 'COMPLETED', 'Refund: Unknown Category')
+                 ON CONFLICT (transaction_ref) DO NOTHING`,
+                [user_id, amount, `RFD-${safeRef}`]
             );
         }
     }
@@ -421,8 +432,9 @@ router.post('/admin/deposits/review', authenticateUser, async (req, res) => {
         await client.query('COMMIT');
         res.json({ success: true, message: `Transaction ${decision}` });
     } catch (err) {
+        console.error("Review Error:", err); // Log the actual error to the console
         await client.query('ROLLBACK');
-        res.status(500).json({ error: "Action failed" });
+        res.status(500).json({ error: "Action failed: " + err.message }); // Return message to client for debugging
     } finally {
         client.release();
     }
@@ -453,6 +465,7 @@ router.post('/admin/record', authenticateUser, validate(recordTransactionSchema)
         await client.query('COMMIT');
         res.json({ success: true, transaction: result.rows[0] });
     } catch (err) {
+        console.error("Admin Record Error:", err);
         await client.query('ROLLBACK');
         res.status(500).json({ error: "Failed to record" });
     } finally { client.release(); }
