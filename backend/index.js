@@ -53,6 +53,8 @@ const settingsModule = require('./modules/settings/routes');
 const reportRoutes = require('./modules/reports/routes');
 const dividendRoutes = require('./modules/dividends/routes');
 const advancedReportRoutes = require('./modules/reports/advanced.routes');
+const historyRoutes = require('./modules/management/history.routes');
+const routes = require('./modules/management/routes');
 
 // --- NEW ASSET & EXPENSE ROUTES ---
 const router = express.Router();
@@ -103,7 +105,8 @@ app.use('/api/reports', apiLimiter, reportRoutes);
 app.use('/api/dividends', apiLimiter, dividendRoutes);
 app.use('/api/advanced-reports', apiLimiter, advancedReportRoutes);
 app.use('/api/management', apiLimiter, router); // Mount new routes under /management
-app.use('/api/management', apiLimiter, require('./modules/management/routes'));
+app.use('/api/management', apiLimiter, routes);
+app.use('/api/management/history', apiLimiter, historyRoutes);
 
 app.use((err, req, res, next) => {
     console.error(err.stack);
