@@ -13,12 +13,42 @@ const RichText = ({ content, className = "" }) => (
 
 export default function GroupWebsite() {
     const [data, setData] = useState({ text: {}, history: [], minutes: [] });
+    // NEW: State to hold dynamic branding info
+    const [branding, setBranding] = useState({ name: 'BetterLink Group', logo: null });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        api.get('/api/cms/content')
-           .then(res => { setData(res.data); setLoading(false); })
-           .catch(err => { console.error(err); setLoading(false); });
+        const fetchData = async () => {
+            try {
+                // Fetch CMS content and Branding settings in parallel
+                const [cmsRes, brandRes] = await Promise.all([
+                    api.get('/api/cms/content'),
+                    api.get('/api/settings/branding') // This public route returns logo & name
+                ]);
+
+                setData(cmsRes.data);
+
+                // Process branding data
+                if (brandRes.data) {
+                    const brandMap = {};
+                    brandRes.data.forEach(item => {
+                        brandMap[item.setting_key] = item.setting_value;
+                    });
+                    
+                    setBranding({
+                        name: brandMap['sacco_name'] || 'BetterLink Group',
+                        logo: brandMap['sacco_logo'] || null
+                    });
+                }
+
+                setLoading(false);
+            } catch (err) {
+                console.error("Failed to load website content", err);
+                setLoading(false);
+            }
+        };
+
+        fetchData();
     }, []);
 
     if(loading) return (
@@ -48,10 +78,16 @@ export default function GroupWebsite() {
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between h-20 items-center">
                         <div className="flex items-center gap-2">
-                            <div className="bg-indigo-600 text-white p-2 rounded-lg">
-                                <Users size={24} />
-                            </div>
-                            <span className="font-bold text-xl tracking-tight text-slate-900">BetterLink Group</span>
+                            {/* DYNAMIC LOGO: Render image if available, else fallback icon */}
+                            {branding.logo ? (
+                                <img src={branding.logo} alt="Logo" className="h-10 w-auto object-contain" />
+                            ) : (
+                                <div className="bg-indigo-600 text-white p-2 rounded-lg">
+                                    <Users size={24} />
+                                </div>
+                            )}
+                            {/* DYNAMIC NAME */}
+                            <span className="font-bold text-xl tracking-tight text-slate-900">{branding.name}</span>
                         </div>
                         <div className="hidden md:flex gap-8 items-center text-sm font-bold text-slate-500">
                             <a href="#vision" className="hover:text-indigo-600 transition">Our Vision</a>
@@ -246,7 +282,7 @@ export default function GroupWebsite() {
             <footer className="bg-slate-900 text-slate-400 py-16 border-t border-slate-800">
                 <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-12 mb-12">
                     <div>
-                        <h4 className="text-white font-bold text-lg mb-4">BetterLink Group</h4>
+                        <h4 className="text-white font-bold text-lg mb-4">{branding.name}</h4>
                         <p className="text-sm leading-relaxed opacity-80">
                             Empowering our members through unity and financial growth since 2005.
                         </p>
@@ -266,7 +302,7 @@ export default function GroupWebsite() {
                     </div>
                 </div>
                 <div className="text-center pt-8 border-t border-slate-800 text-xs opacity-60">
-                    <p>&copy; {new Date().getFullYear()} BetterLink Group. All rights reserved.</p>
+                    <p>&copy; {new Date().getFullYear()} {branding.name}. All rights reserved.</p>
                 </div>
             </footer>
         </div>
