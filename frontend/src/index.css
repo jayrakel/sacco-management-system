@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: Set a nice default font */
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #f8fafc; /* Matches slate-50 */
+}
